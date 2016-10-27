@@ -1,0 +1,16 @@
+hmset    hash.order.token:001  myBalance 2  todayUsedFlow  79  orderId  18092815940   phoneId  18092815940   orderStatus  3  orderKey  637646  orderKeyEndTime  1548544434000  orderEndTime  1588473874000  orderApps  888|889
+
+
+hmset   hash.order.token:002   myBalance 200000  todayUsedFlow  78  orderId  18092815943  phoneId  18092815943  orderStatus  3  orderKey  658646  orderKeyEndTime  1548544434000  orderEndTime  1588473874000  orderApps  888|889
+
+
+hmset   hash.order.token:003   myBalance 200000  todayUsedFlow  78  orderId  18092815947  phoneId  18092815947   orderStatus  3  orderKey  564646  orderKeyEndTime  1548544434000  orderEndTime  1588473874000  orderApps  888|889
+
+
+hmset   hash.order.token:004  myBalance 200000  todayUsedFlow  78  orderId  18092815949   phoneId  18092815949   orderStatus  3  orderKey  667646  orderKeyEndTime  1548544434000  orderEndTime  1588473874000  orderApps  888|889
+
+
+hmset   hash.order.token:005   myBalance 200000  todayUsedFlow  78  orderId  18092815955   phoneId  18092815955   orderStatus  3  orderKey  664645  orderKeyEndTime  1548544434000  orderEndTime  1588473874000  orderApps  888|889
+
+
+hmset   hash.order.token:006   myBalance 200000  todayUsedFlow  78  orderId  18092815965  phoneId  18092815965   orderStatus  3  orderKey  674646  orderKeyEndTime  1548544434000  orderEndTime  1588473874000  orderApps  888|889

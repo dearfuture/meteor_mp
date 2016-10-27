@@ -1,0 +1,115 @@
+*******************test_result********************
+conditions:
+username: root
+password:664646
+:664646*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: roo
+password:664646
+orderAPPs
+:\888|889
+result: Authentication failed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: roo
+password:664646
+orderAPPs
+:\888|889
+result: Authentication failed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: *******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
+*******************test_result********************
+conditions:
+username: root
+password:664646
+orderAPPs
+:\888|889
+result: Authentication succeed
