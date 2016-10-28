@@ -120,6 +120,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 	order->pool = pool;		// 确保pool的标识位不被覆盖，用于内存回收处理
 	order->last_update_stamp = now;
 	order->last_data_stamp = now;
+	order->last_chk_stamp = now;
 	
 	reply->status = get_order_data_from_redis( process->redis_connect, order, con->session->token );
 	if( reply->status != SOCKS_AUTH_SUCCESS ){

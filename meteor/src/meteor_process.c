@@ -184,6 +184,7 @@ int reap_children()
         }
 
         if (processes[i].status_exited) {
+            
             if (processes[i].to_respawn && !processes[i].status_exiting && !to_terminate && !to_quit ) {
                 if (spawn_process( processes[i].worker, i ) == INVALID_PID) {
 					sys_log( LL_WARNING, "could not respawn %s", processes[i].name );
@@ -272,6 +273,7 @@ int send_signal_to_master_process(char *name)
 
 void send_signal_to_worker_process(int signo) 
 {
+    //print_stack_of_signal(signo);
     int i = 0;
 
 	socks_signal_t * sig;
@@ -294,11 +296,14 @@ void send_signal_to_worker_process(int signo)
             continue;
         }
 
+        /*
 		if (processes[i].status_just_spawn) {
+            printf("new worker[%d]!!!\n", processes[i].pid);
             processes[i].status_just_spawn = 0;
             continue;
         }
-        
+        */
+        //printf("master send sig[%d] to worker[%d]\n", signo, processes[i].pid);
         if (kill( processes[i].pid, signo ) == -1) {      
             int err = errno;
             sys_log( LL_WARNING, "kill(%d, %s) failed, %s", processes[i].pid, sig->signame, strerror(err) );

@@ -230,7 +230,7 @@ int add_order_to_timer_queue( socks_worker_process_t *process, socks_order_t *or
 		sys_log(LL_ERROR, "[ %s:%d ] no memory for order_timer rb_node, order_id:%s", __FILE__, __LINE__, order->order_id);
 		return -1;
 	}
-	node->key.lkey = order->last_update_stamp;
+	node->key.lkey = order->last_chk_stamp;
 	node->data = (void *)order;
 	rb_tree_insert_node( &process->order_timer, node, 1 );
 	return 0;
@@ -345,7 +345,7 @@ int add_order_to_will_close_queue( socks_worker_process_t *process, socks_order_
 		sys_log(LL_ERROR, "[ %s:%d ] no memory for will_close_orders rb_node, order_id:%s", __FILE__, __LINE__, order->order_id);
 		return -1;
 	}
-	node->key.pkey = order->order_id;
+	node->key.pkey = order->token;
 	node->data = (void *)order;
 	rb_tree_insert_node( &process->will_close_orders, node, 0 );
 	return 0;
@@ -571,7 +571,8 @@ static int _save_closed_orders_to_redis( socks_worker_process_t *process )
 				tmp = rb_tree_delete( &process->order_cache, &key );
 				if( tmp )
 					rb_list_add( &process->rb_node_pool, tmp );
-				add_order_to_invalid_cache( process, order);
+				if (order->order_status != ORDER_STATUS_SUCCESS)
+					add_order_to_invalid_cache( process, order);
 			}
 			// 回收非冻结的订单，而已冻结的订单不能回收，否则起不到冻结作用
 			if( !order->frozen )
@@ -674,7 +675,7 @@ static int _check_and_update_order( socks_worker_process_t *process )
 		if( order->order_endtime < now ){
 			if( order->order_status != ORDER_STATUS_EXPIRED	&& order->close_updated==0 ){
 				order->order_status = ORDER_STATUS_EXPIRED;
-				node->key.pkey = order->order_id;
+				node->key.pkey = order->token;
 				rb_tree_insert_node( &process->will_close_orders, node, 0 );
 			}
 			else{
@@ -692,7 +693,7 @@ static int _check_and_update_order( socks_worker_process_t *process )
 			// 订单溢出
 			order->order_status = ORDER_STATUS_NO_BALANCE;
 			order->close_updated = 0;
-			node->key.pkey = order->order_id;
+			node->key.pkey = order->token;
 			rb_tree_insert_node( &process->will_close_orders, node, 0 );
 			node = next;
 			continue;
@@ -733,21 +734,25 @@ static int _check_and_update_order( socks_worker_process_t *process )
 			}
 			else{
 				order->last_update_stamp = now;
-				add_order_to_timer_queue( process, order);
-				rb_list_add( &process->rb_node_pool, node );
+				node->key.lkey = order->last_chk_stamp;
+				rb_tree_insert_node( &process->order_timer, node, 1 );
+				//add_order_to_timer_queue( process, order);
+				//rb_list_add( &process->rb_node_pool, node );
 			}
 		}
 		
 		else if( need_close ){
 			order->close_updated = 1;
-			node->key.pkey = order->order_id;
+			node->key.pkey = order->token;
 			rb_tree_insert_node( &process->will_close_orders, node, 0 );
 		}
 
 		
 		if ( !need_update && !need_close ){
-			rb_list_add( &process->rb_node_pool, node );
+			node->key.lkey = order->last_chk_stamp;
+			rb_tree_insert_node( &process->order_timer, node, 1 );
 		}
+			
 
 		node = next;
 	}
@@ -842,7 +847,7 @@ int handle_order_timer( socks_worker_process_t *process )
 			rb_erase( node, &process->overflow_events );
 			if( order->order_status != ORDER_STATUS_NO_BALANCE && !order->close_updated ){
 				order->order_status = ORDER_STATUS_NO_BALANCE;
-				node->key.pkey = order->order_id;
+				node->key.pkey = order->token;
 				rb_tree_insert_node( &process->will_close_orders, node, 0 );
 			}
 			node = next;

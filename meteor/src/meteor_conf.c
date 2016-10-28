@@ -23,8 +23,19 @@
             offsetof(socks_worker_config_t,cmd))       
 #define NO_DEFINED_CMD_OFFSET 0
 
+#define copy_conf_value(member)          \
+    meteor_conf_copy_value(cf->member,setconfig->member)
+#define copy_conf_str_value(member)      \
+    meteor_conf_copy_str_value(cf->member,setconfig->member)
+#define copy_worker_value(member)        \
+    meteor_conf_copy_value(wc->member,setworker->member)
+#define copy_worker_str_value(member)    \
+    meteor_conf_copy_str_value(wc->member,setworker->member)
 
-
+#define copy_worker_outer_addr(member1,cp_member)         \
+    if (strcmp(wc->member1,METEOR_CONF_STR_UNSET))  {     \
+        wc->cp_member = setworker->cp_member;             \
+    }   
 #define DEBUG  0
 
 static int get_domain(char *token_str);
@@ -1426,7 +1437,7 @@ static int conf_handle(meteor_conf_t *cf) //deal with token end of ";"
 
 void print_config(socks_module_config_t *cf)
 {
-    print_new_line(main);
+    printf("\033[1mmain:\033[0m\n");
     print_conf_str_value(user,cf->user_name);
     print_conf_int_value(daemon_mode,cf->daemon_mode);
     print_conf_int_value(worker_processes,cf->workers);
@@ -1481,6 +1492,7 @@ void meteor_conf_unset(socks_module_config_t *config)
 
     strcpy(config->user_name,METEOR_CONF_STR_UNSET);
     strcpy(config->pid_file_name,METEOR_CONF_STR_UNSET);
+    strcpy(config->working_dir,METEOR_CONF_STR_UNSET);
     config->daemon_mode = METEOR_CONF_FLAG_UNSET;
     config->workers = METEOR_CONF_INT_UNSET;
     config->worker_max_sessions = METEOR_CONF_INT_UNSET;
@@ -1551,16 +1563,6 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
     socks_module_config_t *cf = conf_val->config;
     // char    *local_ip = get_local_ip();
 
-    #define copy_conf_value(member)          \
-        meteor_conf_copy_value(cf->member,setconfig->member)
-    #define copy_conf_str_value(member)      \
-        meteor_conf_copy_str_value(cf->member,setconfig->member)
-    #define copy_worker_value(member)        \
-        meteor_conf_copy_value(wc->member,setworker->member)
-    #define copy_worker_str_value(member)    \
-        meteor_conf_copy_str_value(wc->member,setworker->member)
-
-    //default value if unset in configuration   
     copy_conf_str_value(user_name);
     copy_conf_value(user_id);
     copy_conf_str_value(working_dir);
@@ -1599,6 +1601,7 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
     {
         copy_worker_str_value(worker_name);
         copy_worker_str_value(outer_host);
+        copy_worker_outer_addr(outer_host,outer_addr_cache);
         copy_worker_str_value(listen_host);
         copy_worker_value(listen_port);
         copy_worker_value(listen_backlog);

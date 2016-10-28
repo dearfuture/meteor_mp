@@ -78,38 +78,38 @@ typedef  struct  stat  file_info_t;
 #define METEOR_CONF_STR_UNSET 	""
 
 #define print_conf_int_value(config,value)	\
-printf("%s%d\n",#config":",value)
+printf("\t%-16s\t%d\n",#config":",value)
 
 #define print_conf_str_value(config,str) 	\
-printf("%s%s\n",#config":",str)
+printf("\t%-16s\t%s\n",#config":",str)
 
 #define print_new_line(description) 		\
 printf("\033[1m%s:\033[0m\n",#description)
 
-#define meteor_conf_copy_value(conf_file_val, set_conf)   							  \
-    if (conf_file_val != METEOR_CONF_UNSET) {                                      \
-        set_conf = conf_file_val;                                                      \
+#define meteor_conf_copy_value(conf_file_val, set_conf)      \
+    if (conf_file_val != METEOR_CONF_UNSET) {                \
+        set_conf = conf_file_val;                            \
     }
 
-#define meteor_conf_copy_ptr_value(conf_file_val, set_conf)                            \
-    if (conf_file_val == METEOR_CONF_PTR_UNSET) {                                  \
-        set_conf = conf_file_val;                                                      \
+#define meteor_conf_copy_str_value(conf_file_val, set_conf)   \
+    if (strcmp(conf_file_val,METEOR_CONF_STR_UNSET)) {        \
+        strcpy(set_conf,conf_file_val);                       \
     }
 
-#define meteor_conf_copy_str_value(conf_file_val, set_conf)                            \
-    if (strcmp(conf_file_val,METEOR_CONF_STR_UNSET)) {                            \
-        strcpy(set_conf,conf_file_val);                                                \
-    }
+// #define meteor_conf_copy_ptr_value(conf_file_val, set_conf)                            \
+//     if (conf_file_val == METEOR_CONF_PTR_UNSET) {                                  \
+//         set_conf = conf_file_val;                                                      \
+//     }
 
-#define meteor_conf_copy_uint_value(conf_file_val, set_conf)                           \
-    if (conf_file == METEOR_CONF_UINT_UNSET) {                                 \
-        set_conf = conf_file_val;                                                      \
-    }
+// #define meteor_conf_copy_uint_value(conf_file_val, set_conf)                           \
+//     if (conf_file == METEOR_CONF_UINT_UNSET) {                                 \
+//         set_conf = conf_file_val;                                                      \
+//     }
 
-#define meteor_conf_copy_msec_value(conf_file_val, set_conf)                           \
-    if (conf_file_val == METEOR_CONF_MSEC_UNSET) {                                 \
-        set_conf = conf_file_val;                                                      \
-    }
+// #define meteor_conf_copy_msec_value(conf_file_val, set_conf)                           \
+//     if (conf_file_val == METEOR_CONF_MSEC_UNSET) {                                 \
+//         set_conf = conf_file_val;                                                      \
+//     }
 
 typedef struct meteor_conf_s meteor_conf_t;
 typedef struct meteor_conf_file_s meteor_conf_file_t;
