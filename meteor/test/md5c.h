@@ -7,7 +7,8 @@ typedef struct
     unsigned int state[4];
     unsigned char buffer[64];   
 }MD5_CTX;
- 
+
+
                          
 #define F(x,y,z) ((x & y) | (~x & z))
 #define G(x,y,z) ((x & z) | (y & ~z))
@@ -44,5 +45,6 @@ void MD5Final(MD5_CTX *context,unsigned char digest[16]);
 void MD5Transform(unsigned int state[4],unsigned char block[64]);
 void MD5Encode(unsigned char *output,unsigned int *input,unsigned int len);
 void MD5Decode(unsigned int *output,unsigned char *input,unsigned int len);
- 
+
 #endif
+

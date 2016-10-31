@@ -153,7 +153,7 @@ int main(int argc, char **argv)
         strcpy( process.server_addr, argv[1] );    
     }
 	else{
-		strcpy( process.server_addr, "172.18.12.83" );  
+		strcpy( process.server_addr, "172.18.13.51" );  
 	}
 	
 	process.server_port = 3333;
@@ -216,22 +216,9 @@ int main(int argc, char **argv)
 				process.recv_num++;
 				process.recv_byte_num += len;
 				conn->data_length = len;
-				conn->sent_length = 0;
-				if( events[i].events&EPOLLOUT )
-				{
-					//DEBUG_INFO("recv and send udp from: %s:%d, fd:%d, len:%d", inet_ntoa(conn->addr.sin_addr), ntohs(conn->addr.sin_port), conn->fd, len);
-					len = sendto( conn->fd ,conn->buf, conn->data_length, 0, (struct sockaddr *)&conn->addr,addr_len);
-					if( len< 0 ){
-						DEBUG_ERR( "udp send back error: %s:%d, fd: %d", inet_ntoa(conn->addr.sin_addr), ntohs(conn->addr.sin_port), conn->fd );
-						continue;
-					}
-					process.sent_num++;
-					process.sent_byte_num += len;
-					conn->data_length = 0;
-					continue;
-				}
 			}
-			else if( events[i].events&EPOLLOUT )
+
+			if( events[i].events&EPOLLOUT )
 			{
 				int len = sendto( conn->fd ,conn->buf, RECV_BUF_SIZE, 0, (struct sockaddr *)&addr,addr_len);
 				if( len< 0 ){
@@ -242,17 +229,17 @@ int main(int argc, char **argv)
 				//	events[i].events,conn->fd, len );
 				process.sent_num++;
 				process.sent_byte_num += len;
-				conn->sent_length = len;
+				//conn->sent_length = len;
 			}
 			
-			else if(events[i].events&(EPOLLERR|EPOLLHUP) )	{
+			if(events[i].events&(EPOLLERR|EPOLLHUP) )	{
 				DEBUG_ERR( "udp error: %s:%d, fd: %d", inet_ntoa(conn->addr.sin_addr), ntohs(conn->addr.sin_port), conn->fd );
 				continue;
 			}
 			
 			
 		}
-		if( process.recv_num%1000 ==1 ){
+		if( process.recv_num % 1000 ==1 ){
 			long end = _get_current_ms();
 			DEBUG_INFO("client %ld, cost:%d ms, recv_num: %d, sent_num: %d, recv_byte_num:%d, sent_byte_num:%d", start, end-start,
 				process.recv_num, process.sent_num, process.recv_byte_num, process.sent_byte_num);

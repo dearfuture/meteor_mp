@@ -173,8 +173,7 @@ int main(int argc, char **argv)
 
 				int len = recvfrom( conn->fd, conn->buf,RECV_BUF_SIZE, 0 , (struct sockaddr *)&conn->addr ,&addr_len); 
 
-				if( len <= 0 )
-				{ //recvfrom error
+				if( len <= 0 ){ //recvfrom error
 					DEBUG_ERR("recv udp from: %s:%d error, fd:%d, len:%d", inet_ntoa(conn->addr.sin_addr), ntohs(conn->addr.sin_port), conn->fd, len);
 					continue;
 				}
@@ -197,7 +196,7 @@ int main(int argc, char **argv)
 					conn->events ^= EPOLLOUT;
 				//}
 			}
-			
+#if 0			
 			if( events[i].events&EPOLLOUT )
 			{
 				if( conn->data_length>0 ){
@@ -216,13 +215,14 @@ int main(int argc, char **argv)
 				else
 					conn->events = events[i].events;
 			}
+#endif			
 			if(events[i].events&(EPOLLERR|EPOLLHUP) )	{
 				DEBUG_ERR( "udp error: %s:%d, fd: %d", inet_ntoa(conn->addr.sin_addr), ntohs(conn->addr.sin_port), conn->fd );
 				continue;
 			}
 			
 		}
-		if( process.recv_num%1000 ==1 ){
+		if( process.recv_num % 1000 == 1 ){
 			long end = _get_current_ms();
 			DEBUG_INFO("server %ld, cost:%d ms, recv_num: %d, sent_num: %d, recv_byte_num:%d, sent_byte_num:%d", start, end-start,
 				process.recv_num, process.sent_num, process.recv_byte_num, process.sent_byte_num);
