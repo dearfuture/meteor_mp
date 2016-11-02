@@ -516,42 +516,36 @@ int update_order_when_session_close(socks_session_t *session )
 			if( strlen(session->remote->peer_hostname)>0)
 				remote_hostname = session->remote->peer_hostname;
 		}
-		
-		flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld rqt:%ld rst:%ld ldt:%ld cf:%d uf:%d df:%d tf:%d", 
-			protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
-			session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
-			session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
-			session->control_byte_num, session->up_byte_num, session->down_byte_num, session->total_kbyte_num );
 	}
-	else{
+	else {
 		if( session->udp_client!=NULL ){
 			protocol_name = "udp";
 			client_port = ntohs(session->udp_client->peer_host.port) ;
 			if( strlen(session->udp_client->peer_hostname)>0)
 				client_hostname = session->udp_client->peer_hostname;
-		}
-
-		int i;
-		for ( i = 0; i < session->udp_client->udp_remote_num; i++ ){
-			remote_hostname = inet_ntoa(session->udp_client->remote_addr[i].sin_addr);
-			remote_port = ntohs(session->udp_client->remote_addr[i].sin_port);
 			
-			flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld rqt:%ld rst:%ld ldt:%ld cf:%d uf:%d df:%d tf:%d", 
-				protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
-				session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
-				session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
-				0, session->udp_client->remote_up_byte_num[i],  session->udp_client->remote_down_byte_num[i],
-				_calc_udp_remote_total_kbyte( session->udp_client, i ) );
+			int i;
+			for ( i = 0; i < session->udp_client->udp_remote_num; i++ ){
+				remote_hostname = inet_ntoa(session->udp_client->remote_addr[i].sin_addr);
+				remote_port = ntohs(session->udp_client->remote_addr[i].sin_port);
+				
+				flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld %ld %ld %ld cf:%d %d %d %d", 
+					protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
+					session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
+					session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
+					0, session->udp_client->remote_up_byte_num[i],	session->udp_client->remote_down_byte_num[i],
+					_calc_udp_remote_total_kbyte( session->udp_client, i ) );
+			}
+			remote_hostname = "-total";
+			remote_port = session->udp_client->udp_remote_num;
 		}
-
-		remote_hostname = "0.0.0.0";
-		remote_port = 0;
-		flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld rqt:%ld rst:%ld ldt:%ld cf:%d uf:%d df:%d tf:%d", 
-			protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
-			session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
-			session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
-			session->control_byte_num, session->up_byte_num, session->down_byte_num, session->total_kbyte_num );
 	}
+
+	flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld %ld %ld %ld cf:%d %d %d %d", 
+		protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
+		session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
+		session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
+		session->control_byte_num, session->up_byte_num, session->down_byte_num, session->total_kbyte_num );
 
 	return 0;
 }

@@ -212,7 +212,7 @@ struct socks_udp_connection_s
 	unsigned int closed:1;
 
 	unsigned int udp_remote_num;  // 0-7
-	sockaddr_in  remote_addr[SESSION_UDP_REMOTE_NUM];
+	struct sockaddr_in  remote_addr[SESSION_UDP_REMOTE_NUM];
 	int  remote_up_byte_num[SESSION_UDP_REMOTE_NUM];
 	int remote_down_byte_num[SESSION_UDP_REMOTE_NUM];
 
