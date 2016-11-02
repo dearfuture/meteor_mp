@@ -14,11 +14,8 @@
 #include "sockd_rbtree.h"
 #include "meteor_process.h"
 
-extern int process_type;
-
 extern sig_atomic_t  to_terminate;
 extern sig_atomic_t  to_quit;
-
 extern unsigned int	status_exiting;
 
 struct sockaddr_in *convert_to_sockaddr_in( socks_host_t *host, struct sockaddr_in *addr )
@@ -227,6 +224,41 @@ static void _close_conenect(int epoll_fd, socks_connection_t *con, int force )
 	sys_log(LL_DEBUG, "[ %s:%d ] connect closed, fd:%d, peer: %s:%d", __FILE__, __LINE__, con->fd, con->peer_hostname, ntohs(con->peer_host.port) );	
 } 
 
+static void _close_udp_conenect(int epoll_fd, socks_udp_connection_t *con, int force )    
+{    
+	if( con->closed)
+		return;
+	
+	con->closed = 1;
+
+	struct epoll_event epv = {0, {0}};
+	epv.data.ptr = con;    
+
+	int op = EPOLL_CTL_DEL;
+	if( epoll_ctl( epoll_fd, op, con->fd, &epv) < 0)
+		sys_log(LL_ERROR, "[ %s:%d ] epoll del failed, fd:%d", __FILE__, __LINE__, con->fd );    
+	//else	
+		//sys_log(LL_DEBUG, "[ %s:%d ] epoll del ok, fd:%d", __FILE__, __LINE__, con->fd );    
+
+	if( con->fd > 0 ){
+		if( force )
+		{
+			struct linger ling = {0, 0};
+			if( setsockopt( con->fd, SOL_SOCKET, SO_LINGER, (void*)&ling, sizeof(ling) ) == -1 )
+			{
+				sys_log(LL_ERROR, "[ %s:%d ] setsockopt(linger) failed, fd:%d, %s", __FILE__, __LINE__, con->fd, strerror(errno));	
+			}
+		}
+		if( close(con->fd ) < 0 ){
+			sys_log(LL_ERROR, "[ %s:%d ] close socket failed, fd:%d, %s", __FILE__, __LINE__, con->fd, strerror(errno) );   
+		}
+		else
+			con->fd = 0;
+	}
+	
+	sys_log(LL_DEBUG, "[ %s:%d ] connect closed, fd:%d, peer: %s:%d", __FILE__, __LINE__, con->fd, con->peer_hostname, ntohs(con->peer_host.port) );	
+} 
+
    
 void close_session_with_force(socks_worker_process_t *process, socks_session_t *session, int force)    
 {    
@@ -247,7 +279,7 @@ void close_session_with_force(socks_worker_process_t *process, socks_session_t *
 	
 	if( session->udp_client )
 	{
-		_close_conenect( process->epoll_fd, session->udp_client, force );
+		_close_udp_conenect( process->epoll_fd, session->udp_client, force );
 	}
 
 	if( session->remote )
@@ -442,6 +474,13 @@ void _clean_recv_buf( socks_connection_t *con )
 	con->sent_length = 0;
 }
 
+void _clean_udp_recv_buf( socks_udp_connection_t *con )
+{
+	memset( con->buf, 0, UDP_RECV_BUF_SIZE );
+	con->data_length = 0;
+	con->sent_length = 0;
+}
+
 int _send_data( socks_connection_t *con, int send_fd )
 {
 	int total = 0;	
@@ -553,8 +592,9 @@ void _accept_connect_cb( socks_worker_process_t *process, int listen_fd, int eve
 	}
 	
 	if( process->session_num > process->config->max_sessions ){
-		sys_log(LL_ERROR, "[ %s:%d ] accept failed, process sessions:%d, exceed max connection:%d", __FILE__, __LINE__, 
-			process->session_num, process->config->max_sessions ); 
+		int real_session_num = calc_session_of_orders( process );
+		sys_log(LL_ERROR, "[ %s:%d ] accept failed, session_num:%d, exceed max_sessions:%d, real_session_num:%d", __FILE__, __LINE__, 
+			process->session_num, process->config->max_sessions, real_session_num ); 
 		close(fd);
 		return;  
 	}
@@ -816,7 +856,8 @@ void _auth_cb (  socks_worker_process_t *process, int client_fd, int events,   v
 	
 	send_auth_reply( process, con, &reply );
 	if( reply.status != SOCKS_AUTH_SUCCESS ){
-		sys_log(LL_ERROR, "[ %s:%d ] auth failed:0x%2x, fd:%d", __FILE__, __LINE__, reply.status, client_fd );
+		sys_log(LL_ERROR, "[ %s:%d ] auth failed:0x%2x, token:%s, fd:%d", __FILE__, __LINE__, reply.status,
+			con->session->token, client_fd );
 		close_session( process, con->session);
 		return;
 	}
@@ -881,6 +922,7 @@ void _command_cb (  socks_worker_process_t *process, int client_fd, int events, 
 	if( len< will_read)
 	{
 		sys_log(LL_DEBUG, "[ %s:%d ] recv cmd, len: %d, will:%d, fd:%d", __FILE__, __LINE__, len, will_read, client_fd );
+		add_new_session_to_cache( process, con->session );
 		return;
 	}
 
@@ -930,9 +972,11 @@ void _command_cb (  socks_worker_process_t *process, int client_fd, int events, 
 		close_session( process, con->session);
 		return;
 	}
-	if( len < will_read)
+	
+	if( len < will_read){
+		add_new_session_to_cache( process, con->session );
 		return;
-
+	}
 	// update up_byte_num of session
 	do_stat_order_flow( process, con->session, len+ETHERNET_IP_TCP_HEADER_SIZE, 1, 0 );
 
@@ -1041,7 +1085,7 @@ int _init_listen_socket(  socks_worker_process_t *process)
 		if( bind(listen_fd, (  struct sockaddr*)&sin, sizeof(sin)) == -1 ){
 			failed = 1;
 			fprintf(stderr, "try to bind port:%d failed, %s\n", process->config->listen_port, strerror(errno) );
-			sys_log(LL_ERROR, "[ %s:%d ] bind failed, port:%d, fd=%d, %s", __FILE__, __LINE__, 
+			sys_log(LL_ERROR, "[ %s:%d ] bind port:%d failed, fd=%d, %s", __FILE__, __LINE__, 
 				process->config->listen_port, listen_fd, strerror(errno) ); 
 			//close(listen_fd);
 			continue;
@@ -1105,12 +1149,6 @@ void init_worker_process( socks_worker_process_t *process, socks_worker_config_t
         }
     }
 
-    sigset_t set;
-    sigemptyset(&set);
-    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1) {
-		sys_log( LL_ERROR, "sigprocmask() failed, %s", strerror(errno) );
-    }
-
 	// ÉêÇëºìºÚÊ÷½ÚµãµÄ»º´æ¿Õ¼ä
 	rb_list_init( &process->rb_node_pool, process->config->max_sessions*2 ); //w_config->max_sessions
 	// ÉêÇë¶©µ¥µÄ»º´æ¿Õ¼ä
@@ -1141,7 +1179,7 @@ void init_worker_process( socks_worker_process_t *process, socks_worker_config_t
 	// create epoll    
 	process->epoll_fd = epoll_create(MAX_EVENTS);    
 	if(process->epoll_fd <= 0) {
-		sys_log(LL_ERROR, "[ %s:%d ] create epoll failed:%d, %m\n", __FILE__, __LINE__, errno, errno );  
+		sys_log(LL_ERROR, "[ %s:%d ] create epoll failed:%d, %s", __FILE__, __LINE__, errno, strerror(errno) );  
 		/* fatal */
 		exit(2);
 	}
@@ -1150,16 +1188,12 @@ void init_worker_process( socks_worker_process_t *process, socks_worker_config_t
 	int listen_fd = _init_listen_socket( process ); 
 	if( listen_fd < 0 )
 	{
-		sys_log(LL_ERROR, "[ %s:%d ] _init_listen_socket failed.\n", __FILE__, __LINE__  );
+		sys_log(LL_ERROR, "[ %s:%d ] _init_listen_socket failed.", __FILE__, __LINE__  );
 		/* fatal */
 		exit(2);
 	}
 
-	char title[32];
-	sprintf( title, "meteor:worker-%d", w_config->listen_port );
-    meteor_set_process_title(title);
-	
-	sys_log( LL_NOTICE, "server started, port:%d, backlog:%d\n", process->config->listen_port, process->config->listen_backlog);  
+	sys_log( LL_NOTICE, "meteor worker-%d started [pid:%d].", process->config->listen_port, getpid() );  
 
 }
 
@@ -1167,8 +1201,12 @@ static int wait_and_handle_epoll_events( socks_worker_process_t *process, struct
 {
 	// wait for events to happen 
 	int fds = epoll_wait( process->epoll_fd, events, MAX_EVENTS, timer);	  
-	if(fds < 0){	
-		sys_log( LL_ERROR, "epoll_wait error, exit");    
+	if(fds < 0){
+		if( errno == EINTR ){
+			sys_log( LL_INFO, "epoll_wait interrupted, continue.");  
+			return 0;
+		}
+		sys_log( LL_ERROR, "epoll_wait exit, %s", strerror(errno) );  
 		return -1;  
 	}
 	
@@ -1215,11 +1253,10 @@ static int wait_and_handle_epoll_events( socks_worker_process_t *process, struct
 
 void start_worker_process( socks_worker_config_t *worker_config )
 {
-	process_type = PROCESS_WORKER;	// init worker process info
 	socks_worker_process_t process;
 	
 	init_worker_process( &process, worker_config );
-	sys_log( LL_NOTICE, "worker process [%d] listen: %d", getpid(), worker_config->listen_port);	
+	//sys_log( LL_NOTICE, "worker process [%d] listen: %d", getpid(), worker_config->listen_port);	
 
 	// event loop    
 	struct epoll_event *events = (struct epoll_event *)calloc( MAX_EVENTS, sizeof(struct epoll_event) ); 
@@ -1239,8 +1276,8 @@ void start_worker_process( socks_worker_config_t *worker_config )
     		to_quit = 0;
 			sys_log( LL_NOTICE, "worker process %d gracefully shutting down", worker_config->listen_port );
 			
-			char title[32];
-			sprintf( title, "meter:worker-%d is shutting down", worker_config->listen_port );
+			char title[64];
+			sprintf( title, "meteor:worker-%d is shutting down", worker_config->listen_port );
 		    meteor_set_process_title( title );
 			
     		if (!status_exiting) {  
@@ -1285,7 +1322,7 @@ void worker_process_exit( socks_worker_process_t *process )
 		close( process->epoll_fd );
 	
 	redisFree(process->redis_connect);
-	
+	sys_log( LL_NOTICE, "meteor worker-%d exited [pid:%d].\n", process->config->listen_port, getpid() );
 	log_exit();
 	
 	exit(0);

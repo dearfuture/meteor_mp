@@ -77,11 +77,8 @@ typedef  struct  stat  file_info_t;
 #define METEOR_CONF_INT_UNSET 	-1
 #define METEOR_CONF_STR_UNSET 	""
 
-#define print_conf_int_value(config,value)	\
-printf("\t%-16s\t%d\n",#config":",value)
-
 #define print_conf_str_value(config,str) 	\
-printf("\t%-16s\t%s\n",#config":",str)
+printf("\t%-16s\t= %s\n",#config,str)
 
 #define print_new_line(description) 		\
 printf("\033[1m%s:\033[0m\n",#description)
@@ -121,12 +118,6 @@ typedef struct meteor_command_s meteor_command_t;
 
 typedef char  token[METEOR_CONF_MAX_TOKEN_LEN]; 
 typedef token *tokens_array_t;
-
-typedef struct 
-{
-	char 	*name;
-	int 	domain;	
-}meteor_conf_domain_t;
 
 typedef struct 
 {

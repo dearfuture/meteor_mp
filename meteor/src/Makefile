@@ -41,7 +41,7 @@ meteor_process.o: meteor_process.c meteor_process.h
 	cc -c -g meteor_process.c
 
 meteor_conf.o:meteor_conf.c meteor_conf.h sockd.h meteor.h
-	cc -c  ${CFLAGS}  meteor_conf.c
+	cc -c -g ${CFLAGS}  meteor_conf.c
 
 .PHONY:clean
 

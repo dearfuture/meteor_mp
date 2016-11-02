@@ -130,6 +130,8 @@ struct socks_client_connection_s
 	ssize_t data_length;  // recv data length
 	ssize_t sent_length;  // sent data length
 	ssize_t recv_data_size;
+	int recv_count;
+	int send_count;
 	
     long connect_stamp;
     long first_request_stamp;
@@ -185,9 +187,9 @@ struct socks_client_process_s
 
 	int epoll_fd;
 	rb_node_cache_t rb_node_pool;
-	char *local_ip;
+	char  local_ip[64];
 	
-	char *sockd_ip;
+	char  sockd_ip[64];
 	int   sockd_port;
 	
 	int   connect_max;  // allowed total Concurrency connections
@@ -215,21 +217,22 @@ struct socks_client_process_s
 	
 	unsigned int cmd;
 
-	char *tcp_remote_ip;
+	char  tcp_remote_ip[64];
 	int   tcp_remote_port;
 	int   tcp_will_recv_len;
-	char *tcp_file_name;
+	char  tcp_file_name[128];
 	int   tcp_max_cost_ms;
 	int   tcp_min_cost_ms;
 	int   tcp_success_num;
 	long  tcp_success_cost_ms;
 	int   tcp_fail_num;
 
-	char *udp_remote_ip;
-	int   udp_remote_port;
+	char  udp_remote_ip[8][64];
+	int   udp_remote_port[8];
 	int   udp_remote_addr_len;
 	struct sockaddr_in udp_remote_addr;
 	socks_udp_header_t udp_remote_header;
+	int   udp_remote_num;
 	
 	int   udp_will_recv_len;
 	char *udp_test_data;

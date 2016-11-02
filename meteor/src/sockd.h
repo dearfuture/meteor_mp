@@ -40,7 +40,8 @@
 #define MAX_EVENTS 			5120  
 #define MAX_INVALID_TOKENS	1024  
 
-#define RECV_BUF_SIZE 	4096  
+#define RECV_BUF_SIZE 	4096
+#define UDP_RECV_BUF_SIZE 1024
 
 #define WORKER_NAME_LEN	32  
 #define USER_NAME_LEN	32  
@@ -52,6 +53,7 @@
 #define SESSION_TOKEN_MAX_LEN 		64
 #define SESSION_APP_PNAME_MAX_LEN	128
 #define SESSION_PASSWD_MAX_LEN		64
+#define SESSION_UDP_REMOTE_NUM		8
 
 
 #define SOCKS_VERSION_5		0x05
@@ -143,7 +145,7 @@ struct socks_session_s
 {
 	socks_connection_t *client; 		//client: data connection(tcp), tcp controller(udp)
 	socks_connection_t *remote; 		//remote: tcp or udp socket
-	socks_connection_t *udp_client; 	//client: udp socket
+	socks_udp_connection_t *udp_client; 	//client: udp socket
 
 	unsigned char token[SESSION_TOKEN_MAX_LEN];
 	unsigned char app_pname[SESSION_APP_PNAME_MAX_LEN];
@@ -200,35 +202,41 @@ struct socks_connection_s
 } __attribute__((aligned(sizeof(long))));
 
 
+struct socks_udp_connection_s
+{    
+	int fd;    
+	int events;
+	void (*call_back)(socks_worker_process_t *process, int fd, int events, void *arg);
+
+	unsigned int eof:1;
+	unsigned int closed:1;
+
+	unsigned int udp_remote_num;  // 0-7
+	sockaddr_in  remote_addr[SESSION_UDP_REMOTE_NUM];
+	int  remote_up_byte_num[SESSION_UDP_REMOTE_NUM];
+	int remote_down_byte_num[SESSION_UDP_REMOTE_NUM];
+
+	socks_session_t *session;  
+	unsigned char auth_method;
+
+	socks_host_t peer_host;
+	unsigned char peer_hostname[HOST_NAME_LEN];
+
+	unsigned char local_hostname[HOST_NAME_LEN];
+	unsigned int local_port;
+
+	unsigned char buf[UDP_RECV_BUF_SIZE];   // recv data buffer    
+	ssize_t data_length;  // recv data length
+	ssize_t sent_length;  // sent data length
+
+	//for debug
+	unsigned int event_count:6;
+	unsigned long conn_stamp;
+} __attribute__((aligned(sizeof(long))));
+
+
 struct socks_worker_process_s
 {
-	//add by fzy
-	pid_t pid;
-	void (*proc)( socks_worker_config_t *worker_config );
-	int channel[2];
-	int                 status;
-	void               *data;
-    char               *name;
-
-    unsigned            respawn:1;
-    unsigned            just_spawn:1;
-    unsigned            detached:1;
-    unsigned            exiting:1;
-    unsigned            exited:1;
-	unsigned            sig_stop:1;
-	unsigned            sig_quit:1;
-	unsigned            sig_reload:1;
-    /*
-    // linux process info and status
-	pid_t pid;
-	unsigned int exiting:1;
-	unsigned int exited:1;
-	unsigned int detached:1;
-	unsigned int sig_stop:1;
-	unsigned int sig_quit:1;
-	unsigned int sig_reload:1;
-	*/
-
 	int epoll_fd;
 	int listen_fd;
 	
@@ -258,7 +266,6 @@ struct socks_worker_process_s
 	long last_defrag_pool_stamp;			// 最近整理内存池的时戳
 	long last_update_worker_stat_stamp;	// last update process stat info stamp
 
-	
 } __attribute__((aligned(sizeof(long))));
 
 struct socks_worker_config_s

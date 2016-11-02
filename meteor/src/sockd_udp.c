@@ -1,6 +1,7 @@
 #include "sockd_udp.h"
 
 static int _chk_udp_header( unsigned char *data );
+static int _create_udp_connection_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn, int up_direct );
 
 unsigned char *_get_udp_header( unsigned char *data,  socks_udp_header_t *header)
 {
@@ -47,7 +48,7 @@ void _hold_and_wait_udp_data_cb( socks_worker_process_t *process, int fd, int ev
 	else if( len <0 || con->eof ) 
 	{
 		//net disconnected. close session
-		sys_log(LL_ERROR, "[ %s:%d ] client control connection error when recv data, fd:%d", __FILE__, __LINE__, fd );
+		sys_log(LL_ERROR, "[ %s:%d ] client control connection eof:%d, fd:%d", __FILE__, __LINE__, con->eof, fd );
 		close_session( process, con->session);
 		return;
 	}
@@ -59,7 +60,7 @@ void _hold_and_wait_udp_data_cb( socks_worker_process_t *process, int fd, int ev
 
 
 void _send_udp_connect_result( socks_worker_process_t *process, socks_connection_t *con, 
-	socks_connection_t *udp_client, socks_command_reply_t *reply, int result )
+	socks_udp_connection_t *udp_client, socks_command_reply_t *reply, int result )
 {
 	
 	if( result == 0 ){ // 建立udp socket成功
@@ -96,7 +97,8 @@ void _do_command_udp_associate( socks_worker_process_t *process, socks_connectio
 	socks_command_t *cmd, socks_command_reply_t *reply )
 {
 	if(cmd->host.atype == SOCKS_ATYPE_IPV4){
-		socks_connection_t *udp_client = (socks_connection_t *)malloc(sizeof(socks_connection_t));
+		//socks_connection_t *udp_client = (socks_connection_t *)malloc(sizeof(socks_connection_t));
+		socks_udp_connection_t * udp_client = (socks_udp_connection_t*)malloc(sizeof(socks_udp_connection_t));
 		if( udp_client == NULL ){
 			sys_log(LL_ERROR, "[ %s:%d ] malloc udp_client error,fd: %d", __FILE__, __LINE__, con->fd );
 			reply->version = SOCKS_VERSION_5;
@@ -106,11 +108,17 @@ void _do_command_udp_associate( socks_worker_process_t *process, socks_connectio
 			close_session( process, con->session);
 			return;
 		}
-		memset( (void *)udp_client, 0,	sizeof(socks_connection_t) );
-		con->session->udp_client= udp_client;
+		memset( (void *)udp_client, 0,	sizeof(socks_udp_connection_t) );
+		con->session->udp_client = udp_client;
 		udp_client->session = con->session;
 
 		// TODO: 考虑到手机端NAT问题，应该强制设为con->peer_host?
+		size_t hosta_len = strlen(con->peer_hostname);
+		memcpy( udp_client->peer_hostname, con->peer_hostname, hosta_len );
+		udp_client->peer_hostname[hosta_len]= '\0';
+		memcpy( &udp_client->peer_host, &con->peer_host, sizeof(socks_host_t) ); //fixme
+		udp_client->peer_host.port = cmd->host.port;
+/*		
 		char * hosta = inet_ntoa( cmd->host.addr.ipv4 );
 		if( strcmp( hosta, "0.0.0.0" ) == 0 ){ //默认地址是，将tcp controller的对端ip作为udp client的对端ip
 			size_t hosta_len = strlen(con->peer_hostname);
@@ -125,7 +133,7 @@ void _do_command_udp_associate( socks_worker_process_t *process, socks_connectio
 			udp_client->peer_hostname[hosta_len]= '\0';
 			memcpy( &udp_client->peer_host, &cmd->host, sizeof(socks_host_t) );//fixme
 		}
-	
+*/	
 		sys_log(LL_DEBUG, "[ %s:%d ] udp_associate command: %s:%d", __FILE__, __LINE__, udp_client->peer_hostname, ntohs(udp_client->peer_host.port));
 		
 		int ret = _create_udp_connection_ipv4( process, udp_client, 1 ); 
@@ -146,7 +154,7 @@ void _do_command_udp_associate( socks_worker_process_t *process, socks_connectio
 }
 
 
-int _create_udp_connection_ipv4(socks_worker_process_t *process, socks_connection_t *udp_conn, int up_direct )
+static int _create_udp_connection_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn, int up_direct )
 {
 
 	int fd = udp_conn->fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -195,8 +203,8 @@ int _create_udp_connection_ipv4(socks_worker_process_t *process, socks_connectio
 	sys_log(LL_DEBUG, "[ %s:%d ] bind %s udp ok, local: %s:%d, fd:%d", __FILE__, __LINE__, up_direct?"client":"remote", udp_conn->local_hostname, udp_conn->local_port, fd); 
 
 	udp_conn->session->stage = SOCKS_STAGE_UDP_DATA;
-	_clean_recv_buf( udp_conn );
-	_register_session_event( process->epoll_fd, udp_conn, fd, EPOLLIN|EPOLLHUP|EPOLLERR, _udp_data_transform_cb );
+	_clean_udp_recv_buf( udp_conn );
+	_register_session_event( process->epoll_fd, (socks_connection_t *)udp_conn, fd, EPOLLIN|EPOLLHUP|EPOLLERR, _udp_data_transform_cb );
 
  	return 0;
 	
@@ -210,7 +218,7 @@ int _create_udp_connection_ipv4(socks_worker_process_t *process, socks_connectio
 */
 void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events,  void *arg)
 {
-    socks_connection_t *con = (socks_connection_t *)arg;
+    socks_udp_connection_t *con = (socks_udp_connection_t *)arg;
 
 	if( con->session->stage != SOCKS_STAGE_UDP_DATA ){
 		sys_log(LL_ERROR, "[ %s:%d ] error udp stage: %d, fd:%d", __FILE__, __LINE__, con->session->stage, fd );
@@ -225,11 +233,10 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 	int up_direct =  0;
 	struct sockaddr_in addr;  
 	int addr_len = sizeof(struct sockaddr_in);
-	_clean_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
+	_clean_udp_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
 	int len = recvfrom( fd, con->buf,RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
 
-	if( len <= 0 )
-	{ //recvfrom error
+	if( len <= 0 )	{  // recvfrom error
 		sys_log(LL_ERROR, "[ %s:%d ] recv udp from: %s:%d error, fd:%d, len:%d", __FILE__, __LINE__, 
 			con->peer_hostname, ntohs(con->peer_host.port), fd, len);
 		return;
@@ -269,6 +276,22 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 		if(header.host.atype == SOCKS_ATYPE_IPV4){
 			int send_length = con->data_length -(real_data - &con->buf[0]);
 			convert_to_sockaddr_in( &header.host, &addr);
+			if (con->udp_remote_num == 0){
+				con->remote_addr[0] = addr;
+				con->udp_remote_num++;
+			}
+			else{
+				int pos = _get_udp_addr_pos(con, &addr);
+				if (pos < 0 && con->udp_remote_num < SESSION_UDP_REMOTE_NUM){
+					pos = con->udp_remote_num;
+					con->remote_addr[pos] = addr;
+					con->remote_up_byte_num[pos] += len+ETHERNET_IP_UDP_HEADER_SIZE;
+					con->udp_remote_num++;
+				}
+				else{
+					con->remote_up_byte_num[pos] += len+ETHERNET_IP_UDP_HEADER_SIZE;
+				}
+			}
 			
 			addr_len = sizeof(addr);
 			len = sendto( fd, real_data, send_length, 0, (struct sockaddr *)&addr, addr_len);  
@@ -302,6 +325,9 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 		
 		int send_length = head_length+cpy_length;
 		convert_to_sockaddr_in( &con->peer_host, &addr);
+		int pos = _get_udp_addr_pos(con, &addr);
+		if (pos >= 0)
+			con->remote_down_byte_num[pos] += len+ETHERNET_IP_UDP_HEADER_SIZE;
 		addr_len = sizeof(addr);
 		len = sendto( fd, buf, send_length, 0, (struct sockaddr *)&addr, addr_len );
 		if( len< 0 ){
@@ -316,6 +342,17 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 	}
 	
 
+}
+
+int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr)
+{
+	int i;
+	for ( i = 0; i < con->udp_remote_num; i++){
+		if(memcmp(&(con->remote_addr[i]), addr, sizeof(struct sockaddr_in)) == 0)
+			return i;
+	}
+
+	return -1;
 }
 
 #if 0
@@ -338,7 +375,7 @@ void _udp_data_transform_cb_2( socks_worker_process_t *process, int fd, int even
 	{
 		struct sockaddr_in addr;  
     	int addr_len = sizeof(struct sockaddr_in);
-		_clean_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
+		_clean_udp_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
 		int len = recvfrom( fd, con->buf,RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
 
 		if( len <= 0 )
@@ -425,7 +462,7 @@ void _udp_data_transform_cb_2( socks_worker_process_t *process, int fd, int even
 				close_session( process, con->session);
 				return;
 			}
-			_clean_recv_buf ( peer );
+			_clean_udp_recv_buf ( peer );
 			
 			socks_udp_header_t header;
 			memset(&header, 0, sizeof(header) );

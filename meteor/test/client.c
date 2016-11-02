@@ -237,8 +237,8 @@ void _close_conenect( socks_client_process_t *process, socks_client_connection_t
 			DEBUG_ERR( "[ %s:%d ] close socket tcp_fd failed, fd:%d", __FILE__, __LINE__, con->tcp_fd);
 		}
 		
-		DEBUG_INFO( "[ %s:%d ] connect closed. token:%s, tcp_fd:%d, udp_fd:%d, cmd:%d, conn_ms:%d, cost_ms:%d, first_cost_ms:%d, recv_data_size:%d",
-			__FILE__, __LINE__, con->token, con->tcp_fd, con->udp_fd, con->cmd, con->conn_ms, con->cost_ms, con->first_cost_ms, con->recv_data_size );	
+		DEBUG_INFO( "[ %s:%d ] connect closed. token:%s, tcp_fd:%d, udp_fd:%d, cmd:%d, recv_count:%d, send_count:%d, conn_ms:%d, cost_ms:%d, first_cost_ms:%d, recv_data_size:%d",
+			__FILE__, __LINE__, con->token, con->tcp_fd, con->udp_fd, con->cmd, con->recv_count, con->send_count, con->conn_ms, con->cost_ms, con->first_cost_ms, con->recv_data_size );	
 		
 		con->tcp_fd = 0;
 	}  
@@ -246,20 +246,23 @@ void _close_conenect( socks_client_process_t *process, socks_client_connection_t
 	process->connect_num--;
 	process->closed_connection[process->closed_num++] = con;
 	if( con->cmd == SOCKS_CMD_CONNECT ){
-		DEBUG_INFO( "[ %s:%d ] sockd_port:%d, connect_max:%d, closed_num:%d, connect_num:%d, TCP sum: will_recv_len:%d, max_cost_ms:%d, min_cost_ms:%d, avg_cost_ms:%d, succcess:%d, fail:%d, total:%ld ", 
+		int total = process->tcp_success_num+process->tcp_fail_num;
+		int suc_pp = total? (process->tcp_success_num*100/total):0;
+		DEBUG_INFO( "[ %s:%d ] sockd_port:%d, connect_max:%d, closed_num:%d, connect_num:%d, TCP sum: will_recv_len:%d, max_cost_ms:%d, min_cost_ms:%d, avg_cost_ms:%d, succcess:%d, fail:%d, total:%d, suc:%d%%", 
 			__FILE__, __LINE__, process->sockd_port, process->connect_max, process->closed_num, process->connect_num,	
 			process->tcp_will_recv_len, process->tcp_max_cost_ms, process->tcp_min_cost_ms, 
 			process->tcp_success_num>0?(process->tcp_success_cost_ms/process->tcp_success_num):0,
-			process->tcp_success_num, process->tcp_fail_num, process->tcp_success_num+process->tcp_fail_num);
+			process->tcp_success_num, process->tcp_fail_num, total, suc_pp );
 	}
 	else{
-		DEBUG_INFO( "[ %s:%d ] sockd_port:%d, connect_max:%d, closed_num:%d, connect_num:%d, UDP sum: rb_nodes:%d, timer:%d, will_recv_len:%d, retry:%d. max_cost_ms:%d, min_cost_ms:%d, avg_cost_ms:%d, succcess:%d, fail:%d, lost:%d, total:%ld", 
+		int total = process->udp_success_num+process->udp_fail_num+process->udp_lost_num;
+		int suc_pp = total? (process->udp_success_num*100/total):0;
+		DEBUG_INFO( "[ %s:%d ] sockd_port:%d, connect_max:%d, closed_num:%d, connect_num:%d, UDP sum: rb_nodes:%d, timer:%d, will_recv_len:%d, retry:%d. max_cost_ms:%d, min_cost_ms:%d, avg_cost_ms:%d, succcess:%d, fail:%d, lost:%d, total:%d, suc:%d%%", 
 			__FILE__, __LINE__, process->sockd_port, process->connect_max, process->closed_num, process->connect_num,	
 			process->rb_node_pool.size, process->udp_connect_timer.size, 
-			process->udp_will_recv_len,  process->udp_max_cost_ms, process->udp_min_cost_ms, 
+			process->udp_will_recv_len,  con->udp_retry_count, process->udp_max_cost_ms, process->udp_min_cost_ms, 
 			process->udp_success_num>0?(process->udp_success_cost_ms/process->udp_success_num):0,
-			process->udp_success_num, process->udp_fail_num, process->udp_lost_num, 
-			process->udp_success_num+process->udp_fail_num+process->udp_lost_num );
+			process->udp_success_num, process->udp_fail_num, process->udp_lost_num, total, suc_pp );
 	}
 	
 } 
@@ -565,7 +568,7 @@ void _auth_cb( socks_client_process_t *process, int client_fd, int events, void 
 		char passwd_bytes[16]={0};
 		char passwd_hex_str[33]={0};
 		memset(tmp, 0, sizeof(tmp) );
-		sprintf( tmp, "%s/%s", process->token, process->app );
+		sprintf( tmp, "%s/%s", con->token, process->app );
 		
 		int ulen = strlen( tmp);
 		con->buf[i++]=ulen;
@@ -578,10 +581,10 @@ void _auth_cb( socks_client_process_t *process, int client_fd, int events, void 
 		switch(con->cmd)
 		{
 			case SOCKS_CMD_CONNECT:
-				sprintf( tmp, "%s%s%s", process->token, process->tcp_remote_ip, process->orderkey);
+				sprintf( tmp, "%s%s%s", con->token, process->tcp_remote_ip, process->orderkey);
 				break;
 			case SOCKS_CMD_UDP_ASSOCIATE:
-				sprintf( tmp, "%s%s%s", process->token, process->local_ip, process->orderkey );
+				sprintf( tmp, "%s%s%s", con->token, process->local_ip, process->orderkey );
 				break;
 		}
 	    MD5_CTX md5;
@@ -793,6 +796,7 @@ void _tcp_request_cb (  socks_client_process_t *process, int client_fd, int even
 		_close_conenect( process, con, 1);
 		return ;
 	}
+	con->send_count++;
 	_clean_recv_buf(con);
 	_change_session_event( process->epoll_fd, con, client_fd, EPOLLIN|EPOLLHUP|EPOLLERR, _recv_tcp_response_cb );			
 }
@@ -856,7 +860,8 @@ void _udp_request_cb (  socks_client_process_t *process, int client_fd, int even
 	con->first_request_stamp = get_current_ms();
 	con->udp_send_stamp = con->first_request_stamp;	
 	con->first_cost_ms = -1;
-
+	con->send_count++;
+`
 	DEBUG_INFO( "[ %s:%d ] send udp to %s:%d len:%d", __FILE__, __LINE__, process->udp_remote_ip, process->udp_remote_port, len );
 
 	rb_node_t *node = rb_list_pop( &process->rb_node_pool );
@@ -884,6 +889,7 @@ void _recv_udp_response_cb (  socks_client_process_t *process, int client_fd, in
 	if( recv_len > 0 ){
 		con->recv_data_size += recv_len;
 		con->data_length = recv_len;
+		con->recv_count++;
 		
 		if( con->first_cost_ms <0 ){
 			con->first_cost_ms = ( now - con->first_request_stamp );
@@ -894,6 +900,15 @@ void _recv_udp_response_cb (  socks_client_process_t *process, int client_fd, in
 
 		if(con->recv_data_size < process->udp_will_recv_len )
 		{
+			_clean_recv_buf(con);
+			int i = rand()%process->udp_remote_num;
+			init_udp_remote_addr( process, i);
+			u_char *p = _copy_udp_header_to_buf( &process->udp_remote_header, con->buf );
+			
+			// udp message
+			memcpy( p, process->udp_test_data, strlen( process->udp_test_data ) );
+			p += strlen(process->udp_test_data);
+			con->data_length = p - con->buf;
 			int sent_len = sendto( con->udp_fd, con->buf, con->data_length, 0, (struct sockaddr *)&(con->udp_sockd_addr),
 				con->udp_sockd_addr_len );
 			if( sent_len < con->data_length ){
@@ -903,6 +918,7 @@ void _recv_udp_response_cb (  socks_client_process_t *process, int client_fd, in
 				goto to_close;
 			}
 			con->udp_send_stamp = now;
+			con->send_count++;
 			return;
 		}
 		
@@ -956,6 +972,7 @@ void _recv_tcp_response_cb (  socks_client_process_t *process, int client_fd, in
 	int len = _recv_data ( con, will_read );
 	if( len > 0 ){
 		con->recv_data_size += len;
+		con->recv_count++;
 		
 		if( con->first_cost_ms <=0 ){
 			con->first_cost_ms = (now-con->first_request_stamp);
@@ -1093,10 +1110,10 @@ void _connect_socks_host_complete_cb(  socks_client_process_t *process, int fd, 
 
 }
 
-void init_udp_remote_addr(socks_client_process_t *process)
+void init_udp_remote_addr(socks_client_process_t *process, int i)
 {
-	inet_aton( process->udp_remote_ip, &process->udp_remote_addr.sin_addr );
-	process->udp_remote_addr.sin_port = htons( process->udp_remote_port );
+	inet_aton( process->udp_remote_ip[i], &process->udp_remote_addr.sin_addr );
+	process->udp_remote_addr.sin_port = htons( process->udp_remote_port[i] );
 	process->udp_remote_addr_len = sizeof(process->udp_remote_addr);
 	memset( &process->udp_remote_header, 0 ,sizeof(socks_udp_header_t) );
 	convert_to_socks_host_t( &process->udp_remote_header.host, &process->udp_remote_addr );
@@ -1110,13 +1127,13 @@ void init_client_process( socks_client_process_t *process )
 	process->connect_last_stamp = now;
 	process->udp_chk_stamp = now;
 
-	process->local_ip	     = "172.18.12.246";
+	strcpy(process->local_ip, "172.18.12.246");
 
 	process->connect_max     = 4000;
 	process->connect_step	 = 20;
 	process->connect_interval   = 4*1000;	// 5s
 	
-	process->sockd_ip	= "172.18.12.174";
+	strcpy(process->sockd_ip, "172.18.12.174");
 	process->sockd_port	= 1080; 
 
 	// for dante test
@@ -1133,16 +1150,17 @@ void init_client_process( socks_client_process_t *process )
 	process->cmd			= 1;
 	
 	// for tcp test
-	process->tcp_remote_ip		= "172.18.13.51";
+	strcpy(process->tcp_remote_ip, "172.18.13.51");
 	process->tcp_remote_port	= 80; 
-	process->tcp_will_recv_len	= 11518017;			
-	process->tcp_file_name	    = "003.jpg";		
+	process->tcp_will_recv_len	= 11518017;
+	strcpy(process->tcp_file_name, "003.jpg");
 	process->tcp_min_cost_ms    = 999999999;
 
 	// for udp test
-	process->udp_remote_ip   	= "172.18.13.51";
-	process->udp_remote_port 	= 8082;
-	init_udp_remote_addr( process );
+	strcpy(process->udp_remote_ip[0], "172.18.13.51");
+	process->udp_remote_port[0] 	= 8082;
+	process->udp_remote_num = 1;
+	init_udp_remote_addr( process, 0);
 	
 	process->udp_will_recv_len	= 4000;
 	process->udp_chk_interval	= 2*1000;
@@ -1272,6 +1290,7 @@ static int get_options(int argc, char *const *argv)
 	int min_tokens [8] ={0,0,0,0,0,0,0,0};
 	int max_tokens [8] ={0,0,0,0,0,0,0,0};
 	int sockd_port_slot = 0;
+	int udp_remote_num = 0;
 	
 	socks_client_process_t *client = &client_workers[0];
     
@@ -1302,11 +1321,11 @@ static int get_options(int argc, char *const *argv)
 			 
             case 's':
 				if (*p) {
-                    client->sockd_ip=p;
+                    strcpy(client->sockd_ip, p);
                     goto next;
                 }
 				if (argv[++i]) {
-                    client->sockd_ip = argv[i];
+					strcpy(client->sockd_ip, argv[i]);
                     goto next;
                 }
 				
@@ -1362,11 +1381,11 @@ static int get_options(int argc, char *const *argv)
   
             case 't':
                 if (*p) {
-                    client->tcp_remote_ip = p;
+                    strcpy(client->tcp_remote_ip, p);
                     goto next_t1;
                 }
                 if (argv[++i]) {
-                    client->tcp_remote_ip= argv[i];
+                    strcpy(client->tcp_remote_ip, argv[i]);
                     goto next_t1;
                 }
 				goto fail_t;
@@ -1387,7 +1406,7 @@ static int get_options(int argc, char *const *argv)
 						
 				next_t3:
 					if (argv[++i] && argv[i][0] != '-' ) {
-						client->tcp_file_name = argv[i];
+						strcpy(client->tcp_file_name, argv[i]);
 						goto next;
 					}
 							
@@ -1425,24 +1444,24 @@ static int get_options(int argc, char *const *argv)
         
             case 'u':
                 if (*p) {
-                    client->udp_remote_ip = p;
+                    strcpy(client->udp_remote_ip[udp_remote_num], p);
                     goto next_t1;
                 }
                 if (argv[++i]) {
-                    client->udp_remote_ip = argv[i];
+                    strcpy(client->udp_remote_ip[udp_remote_num], argv[i]);
                     goto next_u1;
                 }
 				goto fail_u;
 				
  				next_u1:
 					if (argv[++i] && argv[i][0] != '-' ) {
-						client->udp_remote_port = atoi(argv[i]);
+						client->udp_remote_port[udp_remote_num] = atoi(argv[i]);
 						goto next_u2;
 					}
 					goto fail_u;
 					
 				next_u2:
-					init_udp_remote_addr( client );
+					init_udp_remote_addr( client, 0);
 					if (argv[++i] && argv[i][0] != '-' ) {
 						client->udp_will_recv_len = atoi(argv[i]);
 						goto next_u3;
@@ -1452,6 +1471,7 @@ static int get_options(int argc, char *const *argv)
 				next_u3:
 					if (argv[++i] && argv[i][0] != '-' ) {
 						client->udp_chk_interval = atoi(argv[i])*1000;
+						udp_remote_num++;
 						goto next;
 					}
 							
@@ -1483,6 +1503,7 @@ static int get_options(int argc, char *const *argv)
 		i++;
 	}
 	
+	client->udp_remote_num = udp_remote_num;
     return sockd_port_slot;
 }
 

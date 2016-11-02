@@ -3,33 +3,31 @@
 #include "meteor.h"
 #include "meteor_process.h"
 
-pid_t    g_pid;
-int      process_slot;
-int      last_process;
-
-unsigned int	process;
-int				daemonized;
-
-sig_atomic_t  sig_sigio;
-sig_atomic_t  sig_sigalrm;
-
 sig_atomic_t  to_reap;
 sig_atomic_t  to_terminate;
-sig_atomic_t  to_noaccept;
 sig_atomic_t  to_quit;
 sig_atomic_t  to_reload;
 
-unsigned int	status_exiting;
-unsigned int	status_noaccepting;
-unsigned int	status_restart;
+int process_slot;
+int last_process;
+int	status_exiting;
+
+static process_signal_status_t processes[MAX_PROCESS_NUM];
+static u_char  master_process[] = "meteor:master process";
+
+static int  g_argc;
+static char **g_argv;
+static char **g_os_argv;
+static char *g_os_argv_last;
+
+extern char **environ;
 
 extern socks_module_config_t g_config;
 extern int process_type;
 
-socks_signal_t  signals[] = {
+static socks_signal_t  signals[] = {
     { SIGSYS,  "SIGSYS", "", print_stack_of_signal },
     { SIGPIPE, "SIGPIPE", "", print_stack_of_signal },
-    { SIGHUP,  "SIGHUP", "reload", signal_handler },    
 	{ SIGHUP,  "SIGHUP", "reload", signal_handler },	
     { SIGQUIT, "SIGQUIT", "quit", signal_handler },        /* slowly */
     { SIGTERM, "SIGTERM", "stop", signal_handler },        /* fast   */
@@ -37,7 +35,24 @@ socks_signal_t  signals[] = {
     { 0, NULL, "", NULL }
 };
 
-process_signal_status_t processes[MAX_PROCESS_NUM];
+static char _signal_name[64][32] = {
+	"1: SIGHUP", "2: SIGINT", "3: SIGQUIT", "4: SIGILL",
+	"5: SIGTRAP", "6: SIGABRT", "7: SIGBUS", "8: SIGFPE",
+	"9: SIGKILL", "10: SIGUSR1", "11: SIGSEGV", "12: SIGUSR2",
+	"13: SIGPIPE", "14: SIGALRM", "15: SIGTERM", "16: SIGSTKFLT",
+	"17: SIGCHLD", "18: SIGCONT", "19: SIGSTOP", "20: SIGTSTP",
+	"21: SIGTTIN", "22: SIGTTOU", "23: SIGURG", "24: SIGXCPU",
+	"25: SIGXFSZ", "26: SIGVTALRM", "27: SIGPROF", "28: SIGWINCH",
+	"29: SIGIO", "30: SIGPWR", "31: SIGSYS", "34: SIGRTMIN",
+	"35: SIGRTMIN+1", "36: SIGRTMIN+2", "37: SIGRTMIN+3", "38: SIGRTMIN+4",
+	"39: SIGRTMIN+5", "40: SIGRTMIN+6", "41: SIGRTMIN+7", "42: SIGRTMIN+8",
+	"43: SIGRTMIN+9", "44: SIGRTMIN+10", "45: SIGRTMIN+11", "46: SIGRTMIN+12",
+	"47: SIGRTMIN+13", "48: SIGRTMIN+14", "49: SIGRTMIN+15", "50: SIGRTMAX-14",
+	"51: SIGRTMAX-13", "52: SIGRTMAX-12", "53: SIGRTMAX-11", "54: SIGRTMAX-10",
+	"55: SIGRTMAX-9", "56: SIGRTMAX-8", "57: SIGRTMAX-7", "58: SIGRTMAX-6",
+	"59: SIGRTMAX-5", "60: SIGRTMAX-4", "61: SIGRTMAX-3", "62: SIGRTMAX-2",
+	"63: SIGRTMAX-1", "64: SIGRTMAX" };
+
 
 pid_t spawn_process( int worker, int respawn)
 {
@@ -69,6 +84,17 @@ pid_t spawn_process( int worker, int respawn)
 
 	    case 0:
 			pid = getpid();
+			process_type = PROCESS_WORKER;	// init worker process info
+			
+			sigset_t set;
+			sigemptyset(&set);
+			if (sigprocmask(SIG_SETMASK, &set, NULL) == -1) {
+				sys_log( LL_ERROR, "sigprocmask() failed, %s", strerror(errno) );
+			}
+
+			char title[32];
+			sprintf( title, "meteor:worker-%d", g_config.worker_config[worker].listen_port );
+			meteor_set_process_title(title);
 	        start_worker_process( &g_config.worker_config[worker] );
 	        break;
 
@@ -76,33 +102,23 @@ pid_t spawn_process( int worker, int respawn)
 	        break;
     }
 
-	sys_log( LL_NOTICE, "started worker process [pid:%d], port:%d", pid, g_config.worker_config[worker].listen_port );
+	sys_log( LL_NOTICE, "meteor worker-%d started [pid:%d]", g_config.worker_config[worker].listen_port, pid );
 
     processes[s].pid = pid;
     processes[s].status_exited= 0;
+   	processes[s].status_exiting= 0;
 
     if (respawn >= 0) {
         return pid;
     }
 
+	processes[s].to_respawn = 1;
     processes[s].worker = worker;
 	if( strlen( g_config.worker_config[worker].worker_name ) >0 )
-	   	sprintf( processes[s].name, "%s-%d", g_config.worker_config[worker].worker_name, 
+	   	sprintf( processes[s].name, "meteor:%s-%d", g_config.worker_config[worker].worker_name, 
 			g_config.worker_config[worker].listen_port );
 	else
-		sprintf( processes[s].name, "%s-%d", "worker", g_config.worker_config[worker].listen_port );
-
-   	processes[s].status_exiting= 0;
-   
-    switch (respawn) {
-    case PROCESS_RESPAWN:
-        processes[s].status_just_spawn = 0;
-        break;
-
-    case PROCESS_JUST_RESPAWN:
-        processes[s].status_just_spawn = 1;
-        break;
-    }
+		sprintf( processes[s].name, "meteor:%s-%d", "worker", g_config.worker_config[worker].listen_port );
 
     if (s == last_process) {
         last_process++;
@@ -113,7 +129,7 @@ pid_t spawn_process( int worker, int respawn)
 void wait_child_process_get_status(void)
 {
     int              status;
-    char            *process;
+    char            *pname;
     pid_t            pid;
     int              err;
     int              i;
@@ -149,25 +165,27 @@ void wait_child_process_get_status(void)
 
 
         one = 1;
-        process = "unknown process";
+        pname = "unknown process";
         for (i = 0; i < last_process; i++) {
             if (processes[i].pid == pid) {
                 processes[i].status = status;
                 processes[i].status_exited = 1;
-                process = processes[i].name;
+                processes[i].status_exiting= 0;
+                pname = processes[i].name;
                 break;
             }
         }
 
-        if (WTERMSIG(status)) {
-			sys_log( LL_WARNING, "%s %d exited on signal %d", process, pid, WTERMSIG(status));
+		int signo = WTERMSIG(status);
+        if ( signo ) {
+			sys_log( LL_WARNING, "%s [%d] exited on signal %s[%d]", pname, pid, get_name_of_signal(signo), signo );
         } 
 		else {
-			sys_log( LL_WARNING, "%s %d exited with code %d", process, pid, WEXITSTATUS(status));
+			sys_log( LL_WARNING, "%s [%d] exited with code %d", pname, pid, WEXITSTATUS(status));
         }
 
         if (WEXITSTATUS(status) == 2 && processes[i].to_respawn) {  
-			sys_log( LL_WARNING, "%s %d exited with fatal code %d, cannot be respawned", process, pid, WEXITSTATUS(status));
+			sys_log( LL_ERROR, "%s [%d] exited with fatal code %d, cannot be respawned", pname, pid, WEXITSTATUS(status));
             processes[i].to_respawn = 0;
         }
     }
@@ -212,35 +230,27 @@ int reap_children()
     return live;
 }
 
+char *get_name_of_signal( int signo )
+{
+    if( signo >= 1 && signo <= 64)   
+        return _signal_name[signo-1];
+    return "unknown signal";
+}
+
 
 void print_stack_of_signal( int signo )
 {
-    char _signal[64][32] = {
-        "1: SIGHUP", "2: SIGINT", "3: SIGQUIT", "4: SIGILL",
-        "5: SIGTRAP", "6: SIGABRT", "7: SIGBUS", "8: SIGFPE",
-        "9: SIGKILL", "10: SIGUSR1", "11: SIGSEGV", "12: SIGUSR2",
-        "13: SIGPIPE", "14: SIGALRM", "15: SIGTERM", "16: SIGSTKFLT",
-        "17: SIGCHLD", "18: SIGCONT", "19: SIGSTOP", "20: SIGTSTP",
-        "21: SIGTTIN", "22: SIGTTOU", "23: SIGURG", "24: SIGXCPU",
-        "25: SIGXFSZ", "26: SIGVTALRM", "27: SIGPROF", "28: SIGWINCH",
-        "29: SIGIO", "30: SIGPWR", "31: SIGSYS", "34: SIGRTMIN",
-        "35: SIGRTMIN+1", "36: SIGRTMIN+2", "37: SIGRTMIN+3", "38: SIGRTMIN+4",
-        "39: SIGRTMIN+5", "40: SIGRTMIN+6", "41: SIGRTMIN+7", "42: SIGRTMIN+8",
-        "43: SIGRTMIN+9", "44: SIGRTMIN+10", "45: SIGRTMIN+11", "46: SIGRTMIN+12",
-        "47: SIGRTMIN+13", "48: SIGRTMIN+14", "49: SIGRTMIN+15", "50: SIGRTMAX-14",
-        "51: SIGRTMAX-13", "52: SIGRTMAX-12", "53: SIGRTMAX-11", "54: SIGRTMAX-10",
-        "55: SIGRTMAX-9", "56: SIGRTMAX-8", "57: SIGRTMAX-7", "58: SIGRTMAX-6",
-        "59: SIGRTMAX-5", "60: SIGRTMAX-4", "61: SIGRTMAX-3", "62: SIGRTMAX-2",
-        "63: SIGRTMAX-1", "64: SIGRTMAX" };
-
-    if( signo >= 1 && signo <= 64)   
-        sys_log(LL_ERROR, "[%s] stack frames:", _signal[signo-1]);
+    int err = errno;
+    char *name = get_name_of_signal(signo);
+	if( strcmp( "unknown signal", name ) !=0 )
+		sys_log(LL_ERROR, "[%s] stack frames:", name );
     else
         sys_log(LL_ERROR, "[unknown sig: %d] stack frames:", signo);
     func_stack_dump(0);
 
     if( SIGPIPE != signo && SIGSYS != signo )
         exit(-1);
+	errno = err;
 }
 
 
@@ -261,7 +271,7 @@ int send_signal_to_master_process(char *name)
     socks_signal_t  *sig;
     for (sig = signals; sig->signo != 0; sig++) {
         if (strcmp(name, sig->name) == 0) {
-            printf( "send signal %s to master process\n", sig->signame);
+            printf( "meteor master process will %s. [signal:%s]\n", sig->name, sig->signame);
             if(kill(pid, sig->signo) != -1) {
                 return 0;
             }
@@ -284,9 +294,8 @@ void send_signal_to_worker_process(int signo)
     }
 	
     for( ; i< last_process; i++) {
-		sys_log(LL_DEBUG, "child process: %d %d exiting:%d exited:%d respawn:%d just_respawn:%d",
-            i, processes[i].pid, processes[i].status_exiting, processes[i].status_exited, 
-            processes[i].to_respawn, processes[i].status_just_spawn );
+		sys_log(LL_DEBUG, "child process: %d %d exiting:%d exited:%d to_respawn:%d",
+            i, processes[i].pid, processes[i].status_exiting, processes[i].status_exited, processes[i].to_respawn );
 		
         if (processes[i].pid == -1) {
             continue;
@@ -296,18 +305,11 @@ void send_signal_to_worker_process(int signo)
             continue;
         }
 
-        /*
-		if (processes[i].status_just_spawn) {
-            printf("new worker[%d]!!!\n", processes[i].pid);
-            processes[i].status_just_spawn = 0;
-            continue;
-        }
-        */
-        //printf("master send sig[%d] to worker[%d]\n", signo, processes[i].pid);
+        processes[i].to_respawn = 0;
         if (kill( processes[i].pid, signo ) == -1) {      
             int err = errno;
             sys_log( LL_WARNING, "kill(%d, %s) failed, %s", processes[i].pid, sig->signame, strerror(err) );
-            if (err == ESRCH) {
+            if (err == ESRCH) { // 没有指定进程号
                 processes[i].status_exited = 1;
                 processes[i].status_exiting = 0;
                 to_reap = 1;
@@ -352,22 +354,14 @@ void  signal_handler(int signo)
 
 	        case SIGHUP:
 	            to_reload = 1;
-				action = "reload config";
+				action = "reloading config";
 				break;
 				
-			case SIGALRM:
-				 sig_sigalrm = 1;
-				 break;
-			
-			case SIGIO:
-				 sig_sigio = 1;
-				 break;
-				 
 	        case SIGCHLD:
 	            to_reap = 1;
 	            break;
         }   
-    	sys_log( LL_NOTICE, "master process [pid:%d] received signal #%d(%s). %s\n", pid, signo, sig->name, action );
+    	sys_log( LL_NOTICE, "meteor master process [pid:%d] received signal #%d(%s). %s", pid, signo, sig->name, action );
         break;
 		
     case PROCESS_WORKER:
@@ -388,7 +382,7 @@ void  signal_handler(int signo)
 				action = ", ignoring";
 				break;
 		}
-    	sys_log( LL_NOTICE, "worker process [pid:%d] received signal #%d(%s). %s\n", pid, signo, sig->name, action );
+    	sys_log( LL_NOTICE, "meteor worker process [pid:%d] received signal #%d(%s). %s", pid, signo, sig->name, action );
         break;
     }
 	
@@ -463,5 +457,136 @@ int meteor_daemon()
     return 0;
 }
 
+u_char *meteor_cpystrn(u_char *dst, u_char *src, size_t n)
+{
+    if (n == 0) {
+        return dst;
+    }
+
+    while (--n) {
+        *dst = *src;
+
+        if (*dst == '\0') {
+            return dst;
+        }
+
+        dst++;
+        src++;
+    }
+
+    *dst = '\0';
+
+    return dst;
+}
+
+
+int meteor_save_argv( int argc, char *const *argv)
+{
+
+    size_t     len;
+    int  i;
+
+    g_os_argv = (char **) argv;
+    g_argc = argc;
+
+    g_argv = malloc((argc + 1) * sizeof(char *));
+    if (g_argv == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < argc; i++) {
+        len = strlen(argv[i]) + 1;
+
+        g_argv[i] = malloc(len);
+        if (g_argv[i] == NULL) {
+            return -1;
+        }
+
+        (void) meteor_cpystrn((u_char *) g_argv[i], (u_char *) argv[i], len);
+    }
+
+    g_argv[i] = NULL;
+
+    return 0;
+}
+
+int meteor_init_set_proc_title()
+{
+    u_char      *p;
+    size_t       size;
+    int   i;
+
+    size = 0;
+
+    for (i = 0; environ[i]; i++) {
+        size += strlen(environ[i]) + 1;
+    }
+
+    p = malloc(size);
+    if (p == NULL) {
+        return -1;
+    }
+
+    g_os_argv_last = g_os_argv[0];
+
+    for (i = 0; g_os_argv[i]; i++) {
+        if (g_os_argv_last == g_os_argv[i]) {
+            g_os_argv_last = g_os_argv[i] + strlen(g_os_argv[i]) + 1;
+        }
+    }
+
+    for (i = 0; environ[i]; i++) {
+        if (g_os_argv_last == environ[i]) {
+
+            size = strlen(environ[i]) + 1;
+            g_os_argv_last = environ[i] + size;
+
+            meteor_cpystrn(p, (u_char *) environ[i], size);
+            environ[i] = (char *) p;
+            p += size;
+        }
+    }
+
+    g_os_argv_last--;
+
+    return 0;
+}
+
+void meteor_set_process_title(char *title)
+{
+    u_char     *p;
+    g_os_argv[1] = NULL;
+    
+    p = meteor_cpystrn((u_char *) g_os_argv[0], (u_char *) title, g_os_argv_last-g_os_argv[0]);
+    int len = g_os_argv_last - (char *) p;
+    if (len>0) {
+        memset( p, '\0', len );
+    }
+}
+
+void meteor_set_master_process_title()
+{
+    int size = sizeof(master_process);
+	int i = 0;
+    for ( ; i < g_argc; i++) {
+        size += strlen(g_argv[i]) + 1;
+    }
+
+    char *title = malloc(size);
+    if (title == NULL) {
+        /* fatal */
+        exit(2);
+    }
+
+    char *p = memcpy(title, master_process, sizeof(master_process) - 1);
+	p += sizeof(master_process) - 1;
+    for (i = 0; i < g_argc; i++) {
+        *p++ = ' ';
+        p = meteor_cpystrn(p, (u_char *) g_argv[i], size);
+    }
+	
+    meteor_set_process_title(title);
+
+}
 
 

@@ -64,13 +64,19 @@ static unsigned int argument_number[] = {
 static post_num_t port_number = {"port number",1,65535};
 
 // the end should be NULL 
-static meteor_conf_enum_t  log_mode[] = {
+static meteor_conf_enum_t  daemon_modes[] = {
+    {"on",1},
+    {"off",0},
+    {NULL,-1} //
+};
+
+static meteor_conf_enum_t  log_modes[] = {
     {"file",LOG_MODE_FILE},
     {"console",LOG_MODE_CONSOLE},
     {NULL,-1} //
 };
 
-static meteor_conf_enum_t  log_level[] = {
+static meteor_conf_enum_t  log_levels[] = {
     {"error",LL_ERROR},
     {"warning",LL_WARNING},
     {"notice",LL_NOTICE},
@@ -79,7 +85,7 @@ static meteor_conf_enum_t  log_level[] = {
     {NULL,-1} //
 };
 
-static meteor_conf_domain_t domains[] = {
+static meteor_conf_enum_t domains[] = {
     {"sys_log",DOMAIN_SYS_LOG}, 
     {"flow_log",DOMAIN_FLOW_LOG},
     {"redis_server",DOMAIN_REDIS_SERVER},
@@ -127,13 +133,13 @@ static meteor_command_t meteor_sys_log_commands[] = {
     METEOR_CONF_TAKE1,
     meteor_conf_set_enum,
     cf_offset(sys_log_mode),
-    log_mode},
+    log_modes},
 
     {"level",
     METEOR_CONF_TAKE1,
     meteor_conf_set_enum,
     cf_offset(sys_log_level),
-    log_level},
+    log_levels},
 
     {"file",
     METEOR_CONF_TAKE1,
@@ -928,7 +934,7 @@ static int get_domain(char *token_str)
     for (i=0;domains[i].name;i++)
     {
         if (!strcmp(domains[i].name,token_str))
-            return domains[i].domain;
+            return domains[i].value;
     }
     return ERROR_DOMAIN;
 }
@@ -1000,9 +1006,9 @@ meteor_conf_set_worker_listen_port(meteor_conf_t *cf,meteor_command_t *cmd, void
         *val = meteor_atoi(tokens[i]);
         if( *val == METEOR_ERROR )
             return "invalid number";
-        if( *val > 65535 )
+        if( *val > 65535 || *val<1024 )
         {      
-            return "invalid port number which should be in (1-65535)";
+            return "invalid port number which should be in (1024-65535)";
         }
 
         socks_worker_config_t *tmp = &(cf->config->worker_config[0]);
@@ -1435,41 +1441,85 @@ static int conf_handle(meteor_conf_t *cf) //deal with token end of ";"
     return METEOR_ERROR;
 }
 
+void print_conf_time_value( char *name, int value )
+{
+	if( value >=1000*24*3600 ){
+		printf( "\t%-16s\t= %d days(%dms)\n", name, value/(1000*24*3600), value);
+		return;
+	}
+	if( value >=1000*3600 ){
+		printf( "\t%-16s\t= %d hours(%dms)\n", name, value/(1000*3600), value);
+		return;
+	}
+	if( value >=1000*60 ){
+		printf( "\t%-16s\t= %d minutes(%dms)\n", name, value/(1000*60), value);
+		return;
+	}
+	if( value >=1000 ){
+		printf( "\t%-16s\t= %d seconds(%dms)\n", name, value/(1000), value);
+		return;
+	}
+	printf( "\t%-16s\t= %d seconds\n", name, value);
+}
+
+void print_conf_int_value( char *name, int value )
+{
+	if( value>0 ){
+		printf( "\t%-16s\t= %d\n", name, value );
+		return;
+	}
+	printf( "\t%-16s\t= %s\n", name, "(default)" );
+}
+
+void print_conf_enum_value( meteor_conf_enum_t *enum_name, char *name, int value )
+{
+	meteor_conf_enum_t *e = enum_name;
+	for( ; e->name; e++ ){
+		if( e->value == value )
+			break;
+	}
+	if( e->name ){
+		printf( "\t%-16s\t= %s\n", name, e->name );
+		return;
+	}
+	printf( "\t%-16s:\t= %s\n", name, "default" );
+}
+
 void print_config(socks_module_config_t *cf)
 {
     printf("\033[1mmain:\033[0m\n");
     print_conf_str_value(user,cf->user_name);
-    print_conf_int_value(daemon_mode,cf->daemon_mode);
-    print_conf_int_value(worker_processes,cf->workers);
-    print_conf_int_value(worker_max_sessions,cf->worker_max_sessions);
+    print_conf_enum_value( daemon_modes, "daemon_mode",cf->daemon_mode);
+    print_conf_int_value("worker_processes",cf->workers);
+    print_conf_int_value("worker_max_sessions",cf->worker_max_sessions);
     print_conf_str_value(pid,cf->pid_file_name);
 
     print_new_line(sys_log);
-    print_conf_int_value(mode,cf->sys_log_mode);
-    print_conf_int_value(level,cf->sys_log_level);
+    print_conf_enum_value( log_modes, "mode",cf->sys_log_mode);
+    print_conf_enum_value( log_levels, "level",cf->sys_log_level);
     print_conf_str_value(file,cf->sys_log_file_name);
-    print_conf_int_value(rotate,cf->sys_log_rotate_interval);
+    print_conf_time_value( "rotate",cf->sys_log_rotate_interval*1000);
 
     print_new_line(flow_log);
     print_conf_str_value(file,cf->flow_log_file_name);
-    print_conf_int_value(rotate,cf->flow_log_rotate_interval);
+    print_conf_time_value( "rotate",cf->flow_log_rotate_interval*1000);
 
     print_new_line(redis_server);
     print_conf_str_value(host,cf->redis_host);
-    print_conf_int_value(port,cf->redis_port);
+    print_conf_int_value("port",cf->redis_port);
 
     print_new_line(timer);
-    print_conf_int_value(order_check,cf->order_check_interval);
-    print_conf_int_value(order_update,cf->order_update_interval);
-    print_conf_int_value(order_event_check,cf->order_event_check_interval);
-    print_conf_int_value(order_frozen,cf->order_frozen_timeout);
-    print_conf_int_value(order_idle,cf->order_idle_timeout);
-    print_conf_int_value(session_idle,cf->session_idle_timeout);
-    print_conf_int_value(activity_update,cf->activity_update_interval);
-    print_conf_int_value(activity_check,cf->activity_check_interval);
-    print_conf_int_value(pool_defrag,cf->pool_defrag_interval);
-    print_conf_int_value(pool_defrag_size,cf->pool_defrag_size);
-    print_conf_int_value(worker_stat_update,cf->worker_stat_update_interval);
+    print_conf_time_value("order_check",cf->order_check_interval);              
+    print_conf_time_value("order_update",cf->order_update_interval);            
+    print_conf_time_value("order_event_check",cf->order_event_check_interval);  
+    print_conf_time_value("order_frozen_timeout",cf->order_frozen_timeout);             
+    print_conf_time_value("order_idle_timeout",cf->order_idle_timeout);                 
+    print_conf_time_value("session_idle_timeout",cf->session_idle_timeout);             
+    print_conf_time_value("activity_update",cf->activity_update_interval);      
+    print_conf_time_value("activity_check",cf->activity_check_interval);        
+    print_conf_time_value("pool_defrag",cf->pool_defrag_interval);              
+    print_conf_int_value ("pool_defrag_size",cf->pool_defrag_size);             
+    print_conf_time_value("worker_stat_update",cf->worker_stat_update_interval*1000);
 
     int i;
     socks_worker_config_t *wc = &(cf->worker_config[0]);
@@ -1478,12 +1528,13 @@ void print_config(socks_module_config_t *cf)
         printf("\033[1mworker[%d]:\033[0m\n",i);
         print_conf_str_value(name,wc->worker_name);
         print_conf_str_value(outer_host,wc->outer_host);
-        print_conf_int_value(listen_port,wc->listen_port);
-        print_conf_int_value(recv_buf,wc->recv_buf_size);
-        print_conf_int_value(send_buf,wc->send_buf_size);
-        print_conf_int_value(reuseaddr,wc->reuseaddr);
-        print_conf_int_value(keepalive,wc->keepalive);
-        print_conf_int_value(max_sessions,wc->max_sessions);
+        print_conf_int_value("listen_port",wc->listen_port);
+        print_conf_int_value("backlog",wc->listen_backlog);
+        print_conf_int_value("recv_buf",wc->recv_buf_size);
+        print_conf_int_value("send_buf",wc->send_buf_size);
+        print_conf_int_value("reuseaddr",wc->reuseaddr);
+        print_conf_int_value("keepalive",wc->keepalive);
+        print_conf_int_value("max_sessions",wc->max_sessions);
     }
 }
 
@@ -1551,6 +1602,7 @@ void meteor_conf_unset(socks_module_config_t *config)
     }
 }
 
+//default value in "setconfig"; if conf_file_val set,override "setconfig"
 static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *setconfig)
 {
     
@@ -1561,13 +1613,23 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
     }
 
     socks_module_config_t *cf = conf_val->config;
-    // char    *local_ip = get_local_ip();
+
+    // should before the next if (condition)
+    copy_conf_value(workers);
+
+    //can't be in check_config(setconfig) cause "conf_val" used. looks not well
+    if (conf_val->worker_index != setconfig->workers ) //check after _parse() done
+    {
+        meteor_conf_log_error(LL_ERROR,NULL,"num(%d) of worker block"
+            " not equal to worker_processes(%d)",conf_val->worker_index,setconfig->workers); 
+        return METEOR_ERROR;
+    }
 
     copy_conf_str_value(user_name);
     copy_conf_value(user_id);
     copy_conf_str_value(working_dir);
     copy_conf_value(daemon_mode);
-    copy_conf_value(workers);
+    
     copy_conf_value(worker_max_sessions);
     copy_conf_str_value(pid_file_name);
 
@@ -1593,11 +1655,11 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
     copy_conf_value(pool_defrag_interval);
     copy_conf_value(pool_defrag_size);
     copy_conf_value(worker_stat_update_interval);
-
     int i;
     socks_worker_config_t *wc          = &(cf->worker_config[0]);
     socks_worker_config_t *setworker   = &(setconfig->worker_config[0]);
-    for(i=0;i<cf->workers;i++,wc++,setworker++)
+    // i < ???
+    for(i=0;i < conf_val->worker_index ;i++,wc++,setworker++)
     {
         copy_worker_str_value(worker_name);
         copy_worker_str_value(outer_host);
@@ -1609,7 +1671,12 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
         copy_worker_value(send_buf_size);
         copy_worker_value(reuseaddr);
         copy_worker_value(keepalive);
-        copy_worker_value(max_sessions);
+        //copy_worker_value(max_sessions);
+        // default the golobal worker_max_sessions
+        if ( wc->max_sessions == METEOR_CONF_INT_UNSET )
+            setworker->max_sessions = setconfig->worker_max_sessions; 
+        else
+            setworker->max_sessions = wc->max_sessions;
     }
 
     return METEOR_OK;

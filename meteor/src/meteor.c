@@ -11,32 +11,21 @@
 #include "meteor_process.h"
 #include "sockd_redis.h"
 
-unsigned char g_config_path[128];
+static char g_config_path[FILE_NAME_LEN];
 
 socks_module_config_t g_config;
-
-static int daemonized;
-
-static int master_pid_fd;
-static u_char  master_process[] = "meteor:master process";
 
 unsigned int show_help;
 unsigned int show_version;
 unsigned int show_config;
 unsigned int test_config;
-unsigned int test_config;
 
-static char *config_file = NULL;
 static char *g_signal = NULL;
-
-static char **g_os_argv;
-static char *g_os_argv_last;
 
 int process_type;
 
 extern sig_atomic_t  to_reap;
 extern sig_atomic_t  to_terminate;
-extern sig_atomic_t  to_noaccept;
 extern sig_atomic_t  to_quit;
 extern sig_atomic_t  to_reload;
 
@@ -102,42 +91,42 @@ void set_default_module_conf( socks_module_config_t *conf )
 {
     memset( (void *)conf, 0, sizeof(socks_module_config_t) );
 
-    conf->workers               = 1;
-    conf->worker_max_sessions   = 4096;
+    conf->daemon_mode             = 1;
+    conf->workers                 = 4;
+    conf->worker_max_sessions     = 4096;
 
-    conf->order_check_interval  = 5*1000;
+    conf->order_check_interval    = 5*1000;
     conf->activity_check_interval = 5*1000;
-    conf->order_frozen_timeout  = 3*3600*1000;
-    conf->order_idle_timeout    = 5*60*1000;
-    conf->order_update_interval = 5*1000;
-    conf->activity_update_interval = 5*1000;
-    conf->session_idle_timeout  = 1*60*1000;
+    conf->order_frozen_timeout    = 3*3600*1000;
+    conf->order_idle_timeout      = 5*60*1000;
+    conf->order_update_interval   = 5*1000;
+    conf->activity_update_interval= 5*1000;
+    conf->session_idle_timeout    = 1*60*1000;
     conf->order_event_check_interval= 5*1000;
 
-    conf->pool_defrag_interval  = 1*60*1000;
-    conf->pool_defrag_size      = 100;
+    conf->pool_defrag_interval    = 1*60*1000;
+    conf->pool_defrag_size        = 100;
 
     conf->sys_log_rotate_interval = 24*60*60; // seconds
-    conf->flow_log_rotate_interval = 60*60;
-    conf->sys_log_level         = LL_NOTICE;
-    conf->sys_log_mode          = LOG_MODE_FILE;
+    conf->flow_log_rotate_interval= 60*60;
+    conf->sys_log_level           = LL_NOTICE;
+    conf->sys_log_mode            = LOG_MODE_FILE;
 
-    strcpy( conf->pid_file_name, "../logs/meteor.pid" );
-    strcpy( conf->sys_log_file_name, "../logs/sys.log" );
+    strcpy( conf->pid_file_name,      "../logs/meteor.pid" );
+    strcpy( conf->sys_log_file_name,  "../logs/sys.log" );
     strcpy( conf->flow_log_file_name, "../logs/flow.log" );
 
     conf->worker_stat_update_interval = 5;  //seconds
-    conf->daemon_mode           = 1;
 
     //set_default_worker_conf( conf, &conf->worker_config[0] );
-    strcpy( conf->redis_host, "172.18.12.246" );
+    strcpy( conf->redis_host, "127.0.0.1" );
     conf->redis_port = 6379;
 
     int i;
     for(i = 0;i < 8;i++)
     {
        set_default_worker_conf( conf, &conf->worker_config[i] );
-       conf->worker_config[i].listen_port = 1080 + i;
+       conf->worker_config[i].listen_port = 8001 + i;
     }
 
 }
@@ -157,41 +146,6 @@ void set_default_worker_conf( socks_module_config_t *conf, socks_worker_config_t
     w_conf->max_sessions    = conf->worker_max_sessions;
     w_conf->reuseaddr       = 1;
 }
-
-u_char *meteor_cpystrn(u_char *dst, u_char *src, size_t n)
-{
-    if (n == 0) {
-        return dst;
-    }
-
-    while (--n) {
-        *dst = *src;
-
-        if (*dst == '\0') {
-            return dst;
-        }
-
-        dst++;
-        src++;
-    }
-
-    *dst = '\0';
-
-    return dst;
-}
-
-void meteor_set_process_title(char *title)
-{
-    u_char     *p;
-    g_os_argv[1] = NULL;
-    
-    p = meteor_cpystrn((u_char *) g_os_argv[0], (u_char *) title, g_os_argv_last-g_os_argv[0]);
-    int len = g_os_argv_last - (char *) p;
-    if (len>0) {
-        memset( p, ' ', len );
-    }
-}
-
 
 static int get_options(int argc, char *const *argv)
 {
@@ -231,12 +185,12 @@ static int get_options(int argc, char *const *argv)
                 test_config = 1;
                 
                 if (*p) {
-                    config_file = p;
+                    strcpy(g_config_path, p);
                     goto next;
                 }
 
                 if (argv[++i]) {
-                    config_file = argv[i];
+                    strcpy(g_config_path, argv[i]);
                     goto next;
                 }
                 
@@ -264,7 +218,10 @@ static int get_options(int argc, char *const *argv)
                     g_signal = argv[i];
 
                 } 
-                
+                else {
+                    fprintf(stderr, "option \"-s\" requires signal name\n");
+                    return -1;
+                }
                 if (strcmp(g_signal, "stop") == 0 || strcmp(g_signal, "quit") == 0 || strcmp(g_signal, "reload") == 0){
                     process_type = PROCESS_SIGNALLER;
                     goto next;
@@ -286,42 +243,29 @@ static int get_options(int argc, char *const *argv)
     return 0;
 }
 
-static void write_and_lock_master_pid_file()
+static void write_and_lock_master_pid_file( int lock)
 {
-    if( master_pid_fd = open( g_config.pid_file_name, O_WRONLY|O_CREAT|O_TRUNC, 0644 )<0 ){
-        sys_log( LL_ERROR, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
-        fprintf( stderr, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
-        exit(-1);
-    }
+	if( lock ){
+		int master_pid_fd;
 
-    struct flock lock;
-    lock.l_type = F_WRLCK;
-    lock.l_whence = SEEK_SET;
-    if (fcntl( master_pid_fd, F_SETLK, &lock) < 0){
-        sys_log( LL_ERROR, "\nMeteor is running already.\n" );
-        fprintf( stderr, "\nMeteor is running already.\n" );
-        close( master_pid_fd );
-        exit(-1);
-    }
-/*
-    if( master_pid_fd = open( g_config.pid_file_name, O_WRONLY|O_CREAT|O_TRUNC, 0644)<0 ){
-        sys_log( LL_ERROR, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
-        fprintf( stderr, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
-        exit(-1);
-    }
+	    if( master_pid_fd = open( g_config.pid_file_name, O_WRONLY|O_CREAT, 0644 )<0 ){
+	        sys_log( LL_ERROR, "can't open pid file:%s.", g_config.pid_file_name );
+	        fprintf( stderr, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
+	        exit(-1);
+	    }
 
+	    struct flock lock;
+	    lock.l_type = F_WRLCK;
+	    lock.l_whence = SEEK_SET;
+	    if (fcntl( master_pid_fd, F_SETLK, &lock) < 0){
+	        sys_log( LL_ERROR, "Meteor is running already." );
+	        fprintf( stderr, "\nMeteor is running already.\n" );
+	        close( master_pid_fd );
+	        exit(-1);
+	    }
+	}
 
-    char buf[16];
-    sprintf ( buf, "%d", getpid() );
-    int pidsize = strlen(buf);
-    if( write( master_pid_fd, buf, pidsize) != pidsize ){
-        sys_log( LL_ERROR, "\n write pid[%s] to %s failed.\n", buf, g_config.pid_file_name );
-        fprintf( stderr, "\n write pid[%s] to %s failed.\n", buf, g_config.pid_file_name );
-        exit(-1);
-    }  
-    close( master_pid_fd );
-*/
-    FILE *fp = fopen( g_config.pid_file_name, "w");
+    FILE *fp = fopen( g_config.pid_file_name, "w+");
     if( fp == NULL ) {
         sys_log( LL_ERROR, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
         fprintf( stderr, "\ncan't open pid file:%s.\n", g_config.pid_file_name );
@@ -341,7 +285,7 @@ static void write_and_lock_master_pid_file()
 
 static void master_process_exit( int code)
 {
-   sys_log( LL_NOTICE, "meteor master exited(%d)." , code );
+   sys_log( LL_NOTICE, "meteor master process exited(%d).\n" , code );
    unlink( g_config.pid_file_name );
    log_exit();
    exit(code);
@@ -350,14 +294,16 @@ static void master_process_exit( int code)
 
 int main(int argc, char **argv)    
 {    
-    char *usage = "Usage: meteor [-?hvt] [-s signal] [-c filename] " "\x0a" "\x0a"
+    char *usage = "Usage: meteor [-?hvVt] [-s signal] [-c filename] " "\x0a" "\x0a"
             "Options:" "\x0a"
             "  -?,-h         : this help" "\x0a"
             "  -v            : show version and exit" "\x0a"
-            "  -V            : show version and config info, then exit" "\x0a"
+            "  -V            : show version and configuration info, then exit" "\x0a"
             "  -t [filename] : test configuration and exit" "\x0a"
-            "  -s signal     : send signal to a master process: "
-                               "stop, quit, reload" "\x0a"
+            "  -s signal     : send signal to the master process: " "\x0a"
+            "                      stop   - quickly terminate ;" "\x0a"
+            "                      quit   - gracefully quit;" "\x0a"
+            "                      reload - reload configure file" "\x0a"
             "  -c filename   : set configuration file (default: ../conf/meteor.conf)" "\x0a" "\x0a";
 
     if( get_options(argc, argv)< 0 ){
@@ -379,27 +325,24 @@ int main(int argc, char **argv)
         
         set_default_module_conf( &g_config );
         if( read_config(g_config_path, &g_config) < 0 ){
-            fprintf( stderr, "\nread config file failed: %s, %s\n", g_config_path, strerror(errno) );
             exit(-1);
         }
         print_config( &g_config );
     }
 
     if( test_config ){
-        if( config_file == NULL )
-            config_file = "../conf/meteor.conf";
-        fprintf( stderr, "\ntesting config file: %s\n", config_file );
+		if( strlen( g_config_path ) == 0 )
+			strcpy( g_config_path, "../conf/meteor.conf" );
+        fprintf( stderr, "\ntesting config file: %s\n", g_config_path );
         
         set_default_module_conf( &g_config );
-        if( read_config( config_file, &g_config) < 0 ){
-            fprintf( stderr, "\nread config file failed: %s, %s\n", config_file, strerror(errno) );
-            exit(-1);
-        }
-        else{
-            fprintf( stderr, "\nconfig file syntax is ok.\n" );
-            if( check_config( &g_config ) == 0 )
-                fprintf( stderr, "\nconfig file test is successful.\n" );
-        }
+	    if( read_config( g_config_path, &g_config) < 0 ){
+	        exit(-1);
+	    }
+
+		fprintf( stderr, "\nconfig file syntax is ok.\n" );
+		if( check_config( &g_config ) == 0 )
+			fprintf( stderr, "\nconfig file test is successful.\n" );
     }
 
     if( show_version || show_help || show_config || test_config )
@@ -412,7 +355,6 @@ int main(int argc, char **argv)
         strcpy( g_config_path, "../conf/meteor.conf" );
 
     if( read_config( g_config_path, &g_config) < 0 ){
-        fprintf( stderr, "\nread config file failed: %s, %s\n", g_config_path, strerror(errno) );
         exit(-1);
     }
 
@@ -433,7 +375,6 @@ int main(int argc, char **argv)
         if (meteor_daemon() != 0 ) {
             return 1;
         }
-        daemonized = 1;
     }
     
     redisContext *redis_connect = redis_init();
@@ -446,7 +387,7 @@ int main(int argc, char **argv)
     // start master process
     process_type = PROCESS_MASTER;
 
-    write_and_lock_master_pid_file();
+    write_and_lock_master_pid_file(1);
 
     sigset_t set;
     sigemptyset(&set);
@@ -466,39 +407,18 @@ int main(int argc, char **argv)
     sigemptyset(&set);
 
     // set master process title
-    u_char *title, *p;
-    int i;
-    int size = sizeof(master_process);
+	if( meteor_save_argv( argc,argv )< 0 )
+		exit(1);
+	
+	if( meteor_init_set_proc_title() < 0 )
+		exit(1);
+	
+    meteor_set_master_process_title();
     
-    for (i = 0; i < argc; i++) {
-        size += strlen(argv[i]) + 1;
-    }
-    
-    g_os_argv = argv;
-    g_os_argv_last = g_os_argv[0];
-    for (i = 0; g_os_argv[i]; i++) {
-        if (g_os_argv_last == g_os_argv[i]) {
-            g_os_argv_last = g_os_argv[i] + strlen(g_os_argv[i]) + 1;
-        }
-    }
-    g_os_argv_last--;
-
-    title = (char *)malloc(size);
-    if (title == NULL) {
-        master_process_exit(-2);
-    }
-
-    int len = strlen(master_process);
-    memcpy( title, master_process, len);
-    p = title+len;
-    for (i = 0; i < argc; i++) {
-        *p++ = ' ';
-        p = meteor_cpystrn(p, (u_char *) argv[i], size);
-    }
-    meteor_set_process_title(title);
-    
-    sys_log( LL_NOTICE, "start worker processes");
-    for (i = 0; i < g_config.workers ; i++) {
+    sys_log( LL_NOTICE, "start %d worker processes...", g_config.workers );
+	
+	int i = 0;
+    for ( ; i < g_config.workers ; i++) {
         spawn_process( i, PROCESS_RESPAWN );
     }
 
@@ -510,40 +430,38 @@ int main(int argc, char **argv)
  
         if (to_reap) {
             to_reap = 0;
-            sys_log( LL_NOTICE, "reap children" );
+            sys_log( LL_DEBUG, "reap children" );
             live = reap_children();
         }
 
         if (!live && (to_terminate || to_quit)) {
-            sys_log( LL_NOTICE, "master process exit(0)");
             master_process_exit(0);
         }
 
         if (to_terminate) {
             //send_signal_to_worker_process(SIGKILL);
-            sys_log( LL_NOTICE, "terminate worker process");
+            sys_log( LL_DEBUG, "meteor worker processes will terminate...");
             send_signal_to_worker_process(SIGTERM);
             //to_terminate = 0;
             continue;
         }    
 
         if (to_quit) {
-            sys_log( LL_NOTICE, "gracefully quit worker process");
+            sys_log( LL_DEBUG, "meteor worker processes will gracefully quit... ");
             send_signal_to_worker_process(SIGQUIT);
             continue;
         }
         
         if (to_reload) {
-            //to_reload = 0;
-            sys_log( LL_NOTICE, "reload configure and restart");
-            
-            if(live) send_signal_to_worker_process( SIGQUIT );
-            usleep(2000*1000); // allow new processes to start, sleep 2000ms 
-            if(live) 
-            {
-                to_reap = 1;
-                continue;
+            if(live) {
+				sys_log( LL_DEBUG, "meteor worker process whill reload configure file and restart...");
+				send_signal_to_worker_process( SIGQUIT );
+				usleep(1000*1000); // wait the old worker process quit, sleep 1000ms 
+
+				to_reap = 1;
+				continue;
             }
+			
             to_reload = 0;
             socks_module_config_t conf;
             set_default_module_conf( &conf );

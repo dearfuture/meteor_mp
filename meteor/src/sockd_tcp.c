@@ -210,53 +210,6 @@ void _connect_remote_host_complete_cb(  socks_worker_process_t *process, int rem
 
 }
 
-#if 0
-void _transform_tcp_data( socks_worker_process_t *process, socks_connection_t *con, int send_fd, int up_direct )
-{
-
-	if( con->data_length == con->sent_length && con->data_length != 0 )
-		_clean_recv_buf( con );
-	
-	int len = _recv_data( con, RECV_BUF_SIZE-con->data_length);
-	if( len > 0 )
-	{
-		//stat flow
-		do_stat_order_flow( process, con->session, len, up_direct, 1 );
-	}
-	else if( len <0 || con->eof ) 
-	{
-		//net disconnected. close session
-		if( con->eof )
-			sys_log(LL_DEBUG, "[ %s:%d ] %s eof:%d when recv data, fd:%d, orderId:%s", __FILE__, __LINE__,  
-				up_direct?"client":"remote", con->eof, con->fd, con->session->token);
-		else
-			sys_log(LL_ERROR, "[ %s:%d ] %s error when recv:%d, %s, fd:%d, orderId:%s", __FILE__, __LINE__,  
-				up_direct?"client":"remote", errno, strerror(errno), con->fd, con->session->token);
-		close_session( process, con->session);
-		return;
-	}
-	if( len>=0 )
-	{
-		//int sent_len = send( send_fd, con->buf, len, MSG_WAITALL );//MSG_WAITALL
-		int sent_len = _send_data( con, send_fd );
-		if( sent_len <0 ) {
-			if( errno == EAGAIN ){
-				con->peer_conn->events &= ~EPOLLOUT;
-			}
-			else if( errno == EPIPE ){
-				con->peer_conn->eof = 1;
-				close_session( process, con->session);
-			}
-			sys_log(LL_ERROR, "[ %s:%d ] %s send eof:%d, fd:%d, send_fd:%d, dlen:%d, slen:%d, len: %d, errno:%d, %s", __FILE__, __LINE__, 
-				up_direct?"client":"remote", con->peer_conn->eof, con->fd, send_fd, con->data_length, con->sent_length, len, errno, strerror(errno) );
-		}
-		if( con->data_length == con->sent_length && con->data_length != 0 )
-			_clean_recv_buf( con );
-	}
-
-}
-
-#endif
 
 // while data from client or remote host, then transform to the orther peer
 void _tcp_data_transform_cb(  socks_worker_process_t *process, int fd, int events, void *arg)

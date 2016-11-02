@@ -12,8 +12,6 @@
 #define SECONDS_OF_TIME_ZONE			(8*60*60)
 
 
-typedef struct socks_signal_s socks_signal_t;
-
 typedef struct socks_module_config_s socks_module_config_t;
 typedef struct socks_worker_config_s socks_worker_config_t;
 
@@ -23,6 +21,7 @@ typedef struct flow_pool_activity_s flow_pool_activity_t;
 
 typedef struct socks_session_s socks_session_t;
 typedef struct socks_connection_s socks_connection_t;
+typedef struct socks_udp_connection_s socks_udp_connection_t;
 
 typedef union  socks_addr_u socks_addr_t;
 typedef struct socks_host_s socks_host_t;

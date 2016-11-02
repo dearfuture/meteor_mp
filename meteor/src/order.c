@@ -18,6 +18,7 @@ static int _check_and_update_activity( socks_worker_process_t *process );
 static void _delete_order_from_cache(socks_worker_process_t *process, socks_order_t *order);
 static int _stat_and_chk_activity_flow_if_exist( socks_worker_process_t *process, socks_order_t *order, 
 	unsigned int no_saved_kbyte, unsigned int session_no_saved_kbyte);
+static int _calc_udp_remote_total_kbyte( socks_udp_connection_t * con, int pos );
 
 
 extern socks_module_config_t g_config;
@@ -45,6 +46,7 @@ int order_pool_init(socks_worker_process_t *process, int size)
 		}
 		
 		node->data = (void *)order;
+		rb_tree_init_for_ptr_key( &order->session_cache );
 		rb_list_add( &process->order_pool, node );
 		order++;
 
@@ -145,6 +147,8 @@ int order_pool_add(socks_worker_process_t *process, socks_order_t *order )
 static socks_order_t * _order_calloc()  
 {  
 	socks_order_t *order = (socks_order_t *)calloc( 1, sizeof(socks_order_t) );
+	rb_tree_init_for_ptr_key( &order->session_cache );
+	
 	// for debug, look the pool is enough?
 	order_calloc_count++;
 	sys_log(LL_DEBUG, "[ %s:%d ] order_calloc_count: %d", __FILE__, __LINE__, order_calloc_count );
@@ -488,43 +492,66 @@ int update_order_when_session_close(socks_session_t *session )
 	if (order->activity){
 		order->activity->no_saved_kbyte += session_no_saved_kbyte;
 	}
-
-	char *remote_hostname = "-";
-	int remote_port = 0;
-	if (session->remote !=NULL && strlen(session->remote->peer_hostname)>0)
-		remote_hostname = session->remote->peer_hostname;
 	
-	if( session->remote !=NULL )
-		remote_port = ntohs(session->remote->peer_host.port) ;
+	long request_delta_time = session->first_request_stamp?(session->first_request_stamp-session->connect_stamp):0;
+	long response_delta_time = session->first_response_stamp?(session->first_response_stamp-session->connect_stamp):0;
+	long last_delta_time = session->last_data_stamp?(session->last_data_stamp-session->connect_stamp):0;
 
+	char *protocol_name = "-";
 	char *client_hostname = "-";
 	int client_port = 0;
+	char *remote_hostname = "-";
+	int remote_port = 0;
 
 	if( session->protocol==SOCKS_PROTOCOL_TCP ){
-		if( session->client!=NULL && strlen(session->client->peer_hostname)>0)
-			client_hostname = session->client->peer_hostname;
-		if( session->client!=NULL )
-			client_port = ntohs(session->client->peer_host.port) ;
+		if( session->client!=NULL ){
+			protocol_name = "tcp";
+			client_port = ntohs(session->client->peer_host.port);
+			if( strlen(session->client->peer_hostname)>0)
+				client_hostname = session->client->peer_hostname;
+		}
 
-		flow_log("tcp %s %s %s %s:%d-%s:%d %d ct:%ld rq:%ld rs:%ld ld:%ld c:%d u:%d d:%d t:%d", 
-			order->order_id, order->phone_id, session->app_pname, 
-			client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
-			session->connect_stamp, session->first_request_stamp, session->first_response_stamp, session->last_data_stamp, 
+		if( session->remote !=NULL ){
+			remote_port = ntohs(session->remote->peer_host.port) ;
+			if( strlen(session->remote->peer_hostname)>0)
+				remote_hostname = session->remote->peer_hostname;
+		}
+		
+		flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld rqt:%ld rst:%ld ldt:%ld cf:%d uf:%d df:%d tf:%d", 
+			protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
+			session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
+			session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
 			session->control_byte_num, session->up_byte_num, session->down_byte_num, session->total_kbyte_num );
 	}
 	else{
-		if( session->udp_client!=NULL && strlen(session->udp_client->peer_hostname)>0)
-			client_hostname = session->udp_client->peer_hostname;
-		if( session->udp_client!=NULL )
+		if( session->udp_client!=NULL ){
+			protocol_name = "udp";
 			client_port = ntohs(session->udp_client->peer_host.port) ;
+			if( strlen(session->udp_client->peer_hostname)>0)
+				client_hostname = session->udp_client->peer_hostname;
+		}
 
-		flow_log("udp %s %s %s %s:%d-%s:%d %d ct:%ld rq:%ld rs:%ld ld:%ld c:%d u:%d d:%d t:%d",
-			order->order_id, order->phone_id, session->app_pname, 
-			client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
-			session->connect_stamp, session->first_request_stamp, session->first_response_stamp, session->last_data_stamp, 
+		int i;
+		for ( i = 0; i < session->udp_client->udp_remote_num; i++ ){
+			remote_hostname = inet_ntoa(session->udp_client->remote_addr[i].sin_addr);
+			remote_port = ntohs(session->udp_client->remote_addr[i].sin_port);
+			
+			flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld rqt:%ld rst:%ld ldt:%ld cf:%d uf:%d df:%d tf:%d", 
+				protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
+				session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
+				session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
+				0, session->udp_client->remote_up_byte_num[i],  session->udp_client->remote_down_byte_num[i],
+				_calc_udp_remote_total_kbyte( session->udp_client, i ) );
+		}
+
+		remote_hostname = "0.0.0.0";
+		remote_port = 0;
+		flow_log("%s %s %ld %s %s %s:%d-%s:%d %d cs:%ld rqt:%ld rst:%ld ldt:%ld cf:%d uf:%d df:%d tf:%d", 
+			protocol_name, order->order_id, order->flow_pool_activity_id, order->phone_id, 
+			session->app_pname, client_hostname, client_port, remote_hostname, remote_port, session->closed_by,
+			session->connect_stamp, request_delta_time, response_delta_time, last_delta_time, 
 			session->control_byte_num, session->up_byte_num, session->down_byte_num, session->total_kbyte_num );
 	}
-	
 
 	return 0;
 }
@@ -595,24 +622,56 @@ int save_orders_when_process_exit( socks_worker_process_t *process )
 	while( node ) {
 		next = rb_next(node);
 		order = (socks_order_t  *)node->data;
+		if( !order ){
+			goto to_delete_node;
+		}
 		int nosave_kbyte = _calc_order_nosave_kbyte( process, order );
 		if( nosave_kbyte > 0 ){
 			// save flow data to redis and add overflow event to redis
 			update_order_to_redis( process, order );
 			_stat_and_chk_activity_flow_if_exist( process, order, 0, 0 );
 		}
-		rb_erase( node, &process->order_cache );
-		if( !rb_is_pool(node) ){
-			free(node);
-		}
+
 		if( !order->pool ){
 			free(order);
 		}
-		node = next;
+		
+		to_delete_node:
+			rb_erase( node, &process->order_cache );
+			if( !rb_is_pool(node) ){
+				free(node);
+			}
+			else
+				node->data = NULL;
+			node = next;
 			
 	}
 	return 0;
 }
+
+// for debug
+int calc_session_of_orders( socks_worker_process_t *process )
+{
+	rb_node_t *node, *next;
+	socks_order_t *order;
+	int sum = 0;
+	
+	sys_log( LL_ERROR,"cache orders:%d", __FILE__, __LINE__, process->order_cache.size );
+	
+	node = rb_first( &process->order_cache );
+	while( node ) {
+		next = rb_next(node);
+		order = (socks_order_t  *)node->data;
+		if( !order ){
+			sys_log( LL_ERROR,"invalid node in order_cache:%s", __FILE__, __LINE__, node->key.pkey );
+			continue;
+		}
+		sum += order->session_cache.size;
+		node = next;
+	}
+	return sum;
+}
+
 
 int save_activity_when_process_exit( socks_worker_process_t *process )
 {
@@ -921,6 +980,13 @@ static int _calc_session_total_kbyte( socks_session_t *session )
 		+ _calc_session_delta_byte(session);
 	session->total_kbyte_num = (tmp>>10) + ((tmp&1023)?1:0);	// kb
 	return session->total_kbyte_num;
+}
+
+static int _calc_udp_remote_total_kbyte( socks_udp_connection_t * con, int pos )
+{
+	int tmp = con->remote_up_byte_num[pos] + con->remote_up_byte_num[pos];
+	tmp = (tmp>>10) + ((tmp&1023)?1:0);	// kb
+	return tmp;
 }
 
 // 估算order中未保存的流量，kb为单位
