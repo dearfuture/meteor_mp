@@ -2,7 +2,7 @@
 
 static int _chk_udp_header( unsigned char *data );
 static int _create_udp_connection_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn, int up_direct );
-static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr);
+static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr, int up_direct);
 
 unsigned char *_get_udp_header( unsigned char *data,  socks_udp_header_t *header)
 {
@@ -278,7 +278,7 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 			int send_length = con->data_length -(real_data - &con->buf[0]);
 			convert_to_sockaddr_in( &header.host, &addr);
 			
-			int pos = _get_udp_addr_pos(con, &addr);
+			int pos = _get_udp_addr_pos(con, &addr, up_direct);
 			if( pos != -1 ){
 				con->remote_up_byte_num[pos] += len+ETHERNET_IP_UDP_HEADER_SIZE;
 			}
@@ -316,7 +316,7 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 		int send_length = head_length+cpy_length;
 		convert_to_sockaddr_in( &con->peer_host, &addr);
 		
-		int pos = _get_udp_addr_pos(con, &addr);
+		int pos = _get_udp_addr_pos(con, &addr, up_direct);
 		if( pos != -1 ){
 			con->remote_down_byte_num[pos] += (len+ETHERNET_IP_UDP_HEADER_SIZE);
 		}
@@ -337,7 +337,7 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 
 }
 
-static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr)
+static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr, int up_direct)
 {
 	int i = 0;
 	while( i < con->udp_remote_num ){
@@ -345,10 +345,12 @@ static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * 
 			return i;
 		i++;
 	}
-	if ( con->udp_remote_num < SESSION_UDP_REMOTE_NUM ){
-		mempcy(&con->remote_addr[i], addr, sizeof(struct sockaddr_in) ) ;
-		con->udp_remote_num++;
-		return i;
+	if (up_direct){
+		if ( con->udp_remote_num < SESSION_UDP_REMOTE_NUM ){
+			memcpy(&con->remote_addr[i], addr, sizeof(struct sockaddr_in) ) ;
+			con->udp_remote_num++;
+			return i;
+		}
 	}
 
 	return -1;

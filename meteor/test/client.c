@@ -861,7 +861,6 @@ void _udp_request_cb (  socks_client_process_t *process, int client_fd, int even
 	con->udp_send_stamp = con->first_request_stamp;	
 	con->first_cost_ms = -1;
 	con->send_count++;
-`
 	DEBUG_INFO( "[ %s:%d ] send udp to %s:%d len:%d", __FILE__, __LINE__, process->udp_remote_ip, process->udp_remote_port, len );
 
 	rb_node_t *node = rb_list_pop( &process->rb_node_pool );
@@ -1289,6 +1288,10 @@ static int get_options(int argc, char *const *argv)
 	int sockd_ports[8] ={0,0,0,0,0,0,0,0};
 	int min_tokens [8] ={0,0,0,0,0,0,0,0};
 	int max_tokens [8] ={0,0,0,0,0,0,0,0};
+	char udp_remote_ip[8][64];
+	int udp_remote_port[8] ={0,0,0,0,0,0,0,0};
+	int udp_will_recv_len[8] ={0,0,0,0,0,0,0,0};
+	int udp_chk_interval[8] ={0,0,0,0,0,0,0,0};
 	int sockd_port_slot = 0;
 	int udp_remote_num = 0;
 	
@@ -1444,18 +1447,18 @@ static int get_options(int argc, char *const *argv)
         
             case 'u':
                 if (*p) {
-                    strcpy(client->udp_remote_ip[udp_remote_num], p);
+                    strcpy(udp_remote_ip[udp_remote_num], p);
                     goto next_t1;
                 }
                 if (argv[++i]) {
-                    strcpy(client->udp_remote_ip[udp_remote_num], argv[i]);
+                    strcpy(udp_remote_ip[udp_remote_num], argv[i]);
                     goto next_u1;
                 }
 				goto fail_u;
 				
  				next_u1:
 					if (argv[++i] && argv[i][0] != '-' ) {
-						client->udp_remote_port[udp_remote_num] = atoi(argv[i]);
+						udp_remote_port[udp_remote_num] = atoi(argv[i]);
 						goto next_u2;
 					}
 					goto fail_u;
@@ -1463,14 +1466,14 @@ static int get_options(int argc, char *const *argv)
 				next_u2:
 					init_udp_remote_addr( client, 0);
 					if (argv[++i] && argv[i][0] != '-' ) {
-						client->udp_will_recv_len = atoi(argv[i]);
+						udp_will_recv_len[udp_remote_num] = atoi(argv[i]);
 						goto next_u3;
 					}
 					goto fail_u;
 						
 				next_u3:
 					if (argv[++i] && argv[i][0] != '-' ) {
-						client->udp_chk_interval = atoi(argv[i])*1000;
+						udp_chk_interval[udp_remote_num] = atoi(argv[i])*1000;
 						udp_remote_num++;
 						goto next;
 					}
@@ -1502,8 +1505,21 @@ static int get_options(int argc, char *const *argv)
 		client_workers[i].max_token  = max_tokens[i];
 		i++;
 	}
-	
-	client->udp_remote_num = udp_remote_num;
+
+	i = 0;
+	while(i< sockd_port_slot){
+		int j = 0;
+		while(j < udp_remote_num){
+			strcpy(client_workers[i].udp_remote_ip[j], udp_remote_ip[j]);
+			client_workers[i].udp_remote_port[j] = udp_remote_port[j];
+			client_workers[i].udp_will_recv_len = udp_will_recv_len[j];
+			client_workers[i].udp_chk_interval = udp_chk_interval[j];
+			client_workers[i].udp_remote_num = udp_remote_num;
+			j++;
+		}
+		i++;
+	}
+
     return sockd_port_slot;
 }
 

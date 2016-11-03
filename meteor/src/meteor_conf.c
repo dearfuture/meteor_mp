@@ -41,14 +41,15 @@
 static int get_domain(char *token_str);
 static int conf_handle(meteor_conf_t *cf);
 
+char* meteor_conf_set_worker_block(meteor_conf_t *cf);
 char* meteor_conf_set_flag(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 char* meteor_conf_set_enum(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 char* meteor_conf_set_num(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 char* meteor_conf_set_msec(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 char* meteor_conf_set_str(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
-char* meteor_conf_set_worker_listen_port(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 char* meteor_conf_set_host(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 char* meteor_conf_set_user(meteor_conf_t *cf, meteor_command_t *cmd, void *conf);
+char* meteor_conf_set_worker_listen_port(meteor_conf_t *cf,meteor_command_t *cmd, void *conf);
 
 static unsigned int argument_number[] = {
     METEOR_CONF_NOARGS,
@@ -258,7 +259,8 @@ static meteor_command_t meteor_timer_commands[] = {
     meteor_null_command
 };
 
-static meteor_command_t meteor_worker_commands[] = {
+// static
+ meteor_command_t meteor_worker_commands[] = {
     {"name",
     METEOR_CONF_TAKE1,
     meteor_conf_set_str,
@@ -812,28 +814,17 @@ char* meteor_conf_parse(meteor_conf_t *cf,const char* config_file_name)
                     ASSERT(cf->args->nelts == 1);
                     if ( type == parse_block )
                     {
-                        meteor_conf_log_error(LL_ERROR,cf,"unexpected \"{\"");
+                        meteor_conf_log_error(LL_ERROR,cf,"unexpected \"{\",not allowed nesting block");
                         goto failed;
                     }
                     rd = get_domain((char*)cf->args->elts);
-
 
                     if ( rd != ERROR_DOMAIN )
                     {
                        
                         if (rd == DOMAIN_WORKER)
                         {
-                            old_worker_index = cf->worker_index++;
-                            if(cf->worker_index>MAX_WORKERS)
-                            {
-                                meteor_conf_log_error(LL_ERROR,cf,"too much worker block");
-                                goto failed;
-                            }
-                            meteor_command_t *cmd = meteor_worker_commands;
-                            for (;cmd->name;cmd++)
-                            {
-                                cmd->offset += old_worker_index * sizeof(socks_worker_config_t);
-                            }
+                            rv = meteor_conf_set_worker_block(cf);
                         }
                         else 
                         {
@@ -847,41 +838,21 @@ char* meteor_conf_parse(meteor_conf_t *cf,const char* config_file_name)
                             {
                                 block_appeared[rd] = 1;
                             }
-                        }
 
-                        int old_domain  = cf->domain;
-                        cf->domain = rd;
+                            int old_domain  = cf->domain;
+                            cf->domain = rd;
 
-                        rv = meteor_conf_parse(cf,NULL);
+                            rv = meteor_conf_parse(cf,NULL);
 
-                        cf->domain = old_domain;
-
-                        int worker_block_listen_port_num = cf->worker_index - old_worker_index;
-                        if ( rd == DOMAIN_WORKER && worker_block_listen_port_num > 1 ) // listen_port more 1 param
-                        {
-                            //set Worker_config_t,listen port
-                            int i;
-                            socks_worker_config_t *wc,*prev_wc;
-                            wc =(socks_worker_config_t*)&(cf->config->worker_config[old_worker_index]);
-                            prev_wc = NULL;
-                            for (i=0;i<(worker_block_listen_port_num-1);i++)
-                            {
-                                int tmp_port;
-                                prev_wc = wc++;
-                                tmp_port = wc->listen_port;
-                                memcpy(wc,prev_wc,sizeof(socks_worker_config_t));
-                                wc->listen_port = tmp_port;
-                            }
+                            cf->domain = old_domain;
                         }
 
                         if (rv != METEOR_CONF_OK) 
                         {
                             goto failed; 
                         }
-                        else
-                        {
-                            break;  // continue read token
-                        }
+
+                        break;  // continue read token
                     }
                     else // false domain
                     {
@@ -981,10 +952,59 @@ int isValidhost(char *host)
 }
 
 char *
-meteor_conf_set_worker_listen_port(meteor_conf_t *cf,meteor_command_t *cmd, void *conf)
+meteor_conf_set_worker_block(meteor_conf_t *cf)
+{
+    char *rv;
+    int old_worker_index = cf->worker_index++;
+
+    if(cf->worker_index>MAX_WORKERS)
+    {
+        meteor_conf_log_error(LL_ERROR,cf,"too much worker block");
+        return METEOR_CONF_ERROR;
+    } 
+
+    int old_domain  = cf->domain;
+    cf->domain = DOMAIN_WORKER;
+
+    rv = meteor_conf_parse(cf,NULL);
+
+    cf->domain = old_domain;
+
+     // num of listen_port in a worker block
+    int workers = cf->worker_index - old_worker_index;
+    if ( workers > 1 ) // listen_port more 1 param -> memcpy the parms
+    {
+        //set Worker_config_t,listen port
+        int i;
+        socks_worker_config_t *wc,*prev_wc;
+        wc =(socks_worker_config_t*)&(cf->config->worker_config[old_worker_index]);
+        prev_wc = NULL;
+        for (i=0;i<(workers-1);i++)
+        {
+            int tmp_port;
+            prev_wc = wc++;
+            tmp_port = wc->listen_port;
+            memcpy(wc,prev_wc,sizeof(socks_worker_config_t));
+            wc->listen_port = tmp_port;
+        }
+    }
+
+    meteor_command_t *cmd = meteor_worker_commands;
+
+    for (;cmd->name;cmd++)
+    {
+        cmd->offset += workers * sizeof(socks_worker_config_t);
+    }
+
+    return rv; 
+}
+
+char *
+meteor_conf_set_worker_listen_port(meteor_conf_t *cf,meteor_command_t *cmd,void *conf)
 {
     tokens_array_t tokens = cf->args->elts;
     int *val = conf + cmd->offset;
+    //int *val = &cf->config->worker_config[cf->worker_index-1].listen_port;
     int listen_port_num = cf->args->nelts - 1;
     int i,j;
     if ( cf->worker_index > 1 )
@@ -1685,9 +1705,14 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
 int check_config(socks_module_config_t *config)
 {
     //TODO: should check  value>=0 ??
-    if ( config->order_check_interval < config->order_update_interval)
+    if ( config->order_check_interval > config->order_update_interval)
     {
         meteor_conf_log_error(LL_ERROR,NULL,"order_update shouldn't less than order_check");
+        return METEOR_ERROR;
+    } 
+    if ( config->order_idle_timeout > config->order_frozen_timeout)
+    {
+        meteor_conf_log_error(LL_ERROR,NULL,"order_frozen shouldn't less than order_idle");
         return METEOR_ERROR;
     } 
     if (config->order_idle_timeout < config->session_idle_timeout  )
@@ -1695,11 +1720,12 @@ int check_config(socks_module_config_t *config)
         meteor_conf_log_error(LL_ERROR,NULL,"order_idle shouldn't less than session_idle");
         return METEOR_ERROR;
     } 
-    if (config->activity_check_interval < config->activity_update_interval)
+    if (config->activity_check_interval > config->activity_update_interval)
     {
         meteor_conf_log_error(LL_ERROR,NULL,"activity_update shouldn't less than activity_check");
         return METEOR_ERROR;
     }
+
 
     return METEOR_OK;
 }
