@@ -172,12 +172,18 @@ struct socks_session_s
 	unsigned int closed_by:2;	// 1:client, 2:sockd, 3:remote
 } __attribute__((aligned(sizeof(long))));
 
-
+// socks_connection_s 和 socks_udp_connection_s 的头部结构应尽可能保持一致
 struct socks_connection_s
 {    
 	int fd;    
 	int events;
 	void (*call_back)(socks_worker_process_t *process, int fd, int events, void *arg);    
+
+	unsigned int eof:1;
+	unsigned int closed:1;
+	//for debug
+	unsigned int event_count:6;
+	unsigned long conn_stamp;
 
 	socks_session_t *session;  
 	unsigned char auth_method;
@@ -190,15 +196,10 @@ struct socks_connection_s
 
 	socks_connection_t *peer_conn;
 
-	unsigned char buf[RECV_BUF_SIZE];   // recv data buffer    
 	ssize_t data_length;  // recv data length
 	ssize_t sent_length;  // sent data length
-    
-	unsigned int eof:1;
-	unsigned int closed:1;
-	//for debug
-	unsigned int event_count:6;
-	unsigned long conn_stamp;
+	unsigned char buf[RECV_BUF_SIZE];   // recv data buffer    
+	
 } __attribute__((aligned(sizeof(long))));
 
 
@@ -210,11 +211,9 @@ struct socks_udp_connection_s
 
 	unsigned int eof:1;
 	unsigned int closed:1;
-
-	unsigned int udp_remote_num;  // 0-7
-	struct sockaddr_in  remote_addr[SESSION_UDP_REMOTE_NUM];
-	int  remote_up_byte_num[SESSION_UDP_REMOTE_NUM];
-	int remote_down_byte_num[SESSION_UDP_REMOTE_NUM];
+	//for debug
+	unsigned int event_count:6;
+	unsigned long conn_stamp;
 
 	socks_session_t *session;  
 	unsigned char auth_method;
@@ -225,13 +224,17 @@ struct socks_udp_connection_s
 	unsigned char local_hostname[HOST_NAME_LEN];
 	unsigned int local_port;
 
-	unsigned char buf[UDP_RECV_BUF_SIZE];   // recv data buffer    
+	socks_connection_t *peer_conn;
+
 	ssize_t data_length;  // recv data length
 	ssize_t sent_length;  // sent data length
+	unsigned char buf[UDP_RECV_BUF_SIZE];   // recv data buffer    
 
-	//for debug
-	unsigned int event_count:6;
-	unsigned long conn_stamp;
+	unsigned int udp_remote_num;  // 0-7
+	struct sockaddr_in  remote_addr[SESSION_UDP_REMOTE_NUM];
+	int  remote_up_byte_num[SESSION_UDP_REMOTE_NUM];
+	int remote_down_byte_num[SESSION_UDP_REMOTE_NUM];
+
 } __attribute__((aligned(sizeof(long))));
 
 

@@ -591,13 +591,14 @@ void _accept_connect_cb( socks_worker_process_t *process, int listen_fd, int eve
 		return;    
 	}
 	
+	/*
 	if( process->session_num > process->config->max_sessions ){
 		int real_session_num = calc_session_of_orders( process );
 		sys_log(LL_ERROR, "[ %s:%d ] accept failed, session_num:%d, exceed max_sessions:%d, real_session_num:%d", __FILE__, __LINE__, 
 			process->session_num, process->config->max_sessions, real_session_num ); 
 		close(fd);
 		return;  
-	}
+	}*/
 
 
 	int flags = fcntl( fd, F_GETFL, 0);
@@ -762,13 +763,23 @@ void _auth_cb (  socks_worker_process_t *process, int client_fd, int events,   v
 	
 	req.auth_method = con->auth_method;
 
+	if( process->session_num > process->config->max_sessions ){
+		int real_session_num = calc_session_of_orders( process );
+		sys_log(LL_ERROR, "[ %s:%d ] accept failed, session_num:%d, exceed max_sessions:%d, real_session_num:%d", __FILE__, __LINE__, 
+			process->session_num, process->config->max_sessions, real_session_num ); 
+
+		reply.status = SOCKS_AUTH_ERR_SYS_BUSY;
+		send_auth_reply( process, con, &reply);
+		close_session(process, con->session);
+		return;  
+	}
+
 	if( con->session->stage != SOCKS_STAGE_AUTH){
 		sys_log(LL_ERROR, "[ %s:%d ] error stage: %d, fd:%d", __FILE__, __LINE__, con->session->stage, client_fd );
 		send_auth_reply( process, con, &reply );
 		close_session( process, con->session);
 		return;
 	}
-	
 	
 	int len;    
 	int will_read = 2;

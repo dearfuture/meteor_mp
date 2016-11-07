@@ -235,7 +235,7 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 	struct sockaddr_in addr;  
 	int addr_len = sizeof(struct sockaddr_in);
 	_clean_udp_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
-	int len = recvfrom( fd, con->buf,RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
+	int len = recvfrom( fd, con->buf,UDP_RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
 
 	if( len <= 0 )	{  // recvfrom error
 		sys_log(LL_ERROR, "[ %s:%d ] recv udp from: %s:%d error, fd:%d, len:%d", __FILE__, __LINE__, 
@@ -297,7 +297,7 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 	}
 	else{ // remote
 
-		unsigned char buf[RECV_BUF_SIZE];
+		unsigned char buf[UDP_RECV_BUF_SIZE];
 		memset(buf, 0, sizeof(buf) );
 		
 		socks_udp_header_t header;
@@ -377,7 +377,7 @@ void _udp_data_transform_cb_2( socks_worker_process_t *process, int fd, int even
 		struct sockaddr_in addr;  
     	int addr_len = sizeof(struct sockaddr_in);
 		_clean_udp_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
-		int len = recvfrom( fd, con->buf,RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
+		int len = recvfrom( fd, con->buf,UDP_RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
 
 		if( len <= 0 )
 		{ //recvfrom error

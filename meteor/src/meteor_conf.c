@@ -867,11 +867,11 @@ char* meteor_conf_parse(meteor_conf_t *cf,const char* config_file_name)
                         goto failed; 
                      }
                     break; // the next for loop
-				default:
-					meteor_conf_log_error(LL_ERROR,cf,"code [%s:%d] false rc",__FILE__,__LINE__);
+    			default:
+    				meteor_conf_log_error(LL_ERROR,cf,"code [%s:%d] false rc",__FILE__,__LINE__);
                     goto failed;
-			}
-		}
+    		}
+    	}
 
 	failed:
 		rc = METEOR_ERROR;
@@ -1683,7 +1683,7 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
     {
         copy_worker_str_value(worker_name);
         copy_worker_str_value(outer_host);
-        copy_worker_outer_addr(outer_host,outer_addr_cache);
+        
         copy_worker_str_value(listen_host);
         copy_worker_value(listen_port);
         copy_worker_value(listen_backlog);
@@ -1697,6 +1697,18 @@ static int copy_conf_file_val(meteor_conf_t *conf_val,socks_module_config_t *set
             setworker->max_sessions = setconfig->worker_max_sessions; 
         else
             setworker->max_sessions = wc->max_sessions;
+
+        //copy_worker_outer_addr(outer_host,outer_addr_cache);
+        struct hostent *hnet = gethostbyname(setworker->outer_host);
+        if(hnet)
+        {
+            setworker->outer_addr_cache = *(struct in_addr*)(hnet->h_addr_list[0]);            
+        } 
+        else
+        {
+            meteor_conf_log_error(LL_ERROR,NULL,"worker \"%s\" error",wc->outer_host);
+            return METEOR_ERROR;
+        }
     }
 
     return METEOR_OK;

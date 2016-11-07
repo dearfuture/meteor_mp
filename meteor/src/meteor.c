@@ -257,7 +257,10 @@ static void write_and_lock_master_pid_file( int lock)
 	    struct flock lock;
 	    lock.l_type = F_WRLCK;
 	    lock.l_whence = SEEK_SET;
+        lock.l_start = 0;
+        lock.l_len = 0;
 	    if (fcntl( master_pid_fd, F_SETLK, &lock) < 0){
+            perror("fcntl error");
 	        sys_log( LL_ERROR, "Meteor is running already." );
 	        fprintf( stderr, "\nMeteor is running already.\n" );
 	        close( master_pid_fd );
