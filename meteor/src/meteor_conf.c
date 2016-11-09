@@ -259,8 +259,7 @@ static meteor_command_t meteor_timer_commands[] = {
     meteor_null_command
 };
 
-// static
- meteor_command_t meteor_worker_commands[] = {
+ static meteor_command_t meteor_worker_commands[] = {
     {"name",
     METEOR_CONF_TAKE1,
     meteor_conf_set_str,
@@ -767,7 +766,7 @@ char* meteor_conf_parse(meteor_conf_t *cf,const char* config_file_name)
 		for (;;) 
 		{
 			rc = meteor_conf_read_token(cf);
-#if  DEBUG
+#if  0
             printf("rc=%d,nelts=%d,domain=%d: ",rc,cf->args->nelts,cf->domain);
                 int i;
                 tokens_array_t tokens;
@@ -878,6 +877,16 @@ char* meteor_conf_parse(meteor_conf_t *cf,const char* config_file_name)
 	done:
 		if (config_file_name)
 		{
+            if (cf->worker_index)
+            {   
+                //to fix the bug --set worker error-- 
+                //when call _conf_parse( or read_config() ) more than once
+                meteor_command_t *cmd = meteor_worker_commands;
+                for (;cmd->name;cmd++)
+                {
+                    cmd->offset -= cf->worker_index * sizeof(socks_worker_config_t);
+                }
+            }
 			if (cf->conf_file->buf->start)
 			{
                 free(cf->conf_file->buf->start);
@@ -1430,6 +1439,7 @@ static int conf_handle(meteor_conf_t *cf) //deal with token end of ";"
             }                 
 
             rv = cmd->set(cf,cmd,cf->config);
+
             if (rv == METEOR_CONF_OK)
             {
                 return METEOR_OK;
@@ -1775,4 +1785,5 @@ int read_config(const char* config_file_name,socks_module_config_t *setconfig) /
     }
     
     return copy_conf_file_val(&cf,setconfig); 
+
 }
