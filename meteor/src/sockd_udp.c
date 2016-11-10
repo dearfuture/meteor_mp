@@ -311,15 +311,15 @@ void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events
 		int cpy_length = sizeof(buf)-head_length;
 		if( cpy_length >  con->data_length )
 			cpy_length = con->data_length;
-		memcpy( data, &con->buf[0], cpy_length ); 
-		
-		int send_length = head_length+cpy_length;
-		convert_to_sockaddr_in( &con->peer_host, &addr);
-		
+		memcpy( data, &con->buf[0], cpy_length );
+
 		int pos = _get_udp_addr_pos(con, &addr, up_direct);
 		if( pos != -1 ){
 			con->remote_down_byte_num[pos] += (len+ETHERNET_IP_UDP_HEADER_SIZE);
 		}
+		
+		int send_length = head_length+cpy_length;
+		convert_to_sockaddr_in( &con->peer_host, &addr);
 
 		addr_len = sizeof(addr);
 		len = sendto( fd, buf, send_length, 0, (struct sockaddr *)&addr, addr_len );

@@ -978,7 +978,7 @@ static int _calc_session_total_kbyte( socks_session_t *session )
 
 static int _calc_udp_remote_total_kbyte( socks_udp_connection_t * con, int pos )
 {
-	int tmp = con->remote_up_byte_num[pos] + con->remote_up_byte_num[pos];
+	int tmp = con->remote_up_byte_num[pos] + con->remote_down_byte_num[pos];
 	tmp = (tmp>>10) + ((tmp&1023)?1:0);	// kb
 	return tmp;
 }
