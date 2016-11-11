@@ -76,7 +76,7 @@ worker{
     #name           worker;               #worker-name,default worker1,worker2,...
     #outer_host     172.18.12.181;        #default local ip
     #listen_host    172.18.12.181;        #default local ip
-    listen_port     8001 8002 8003 8004;  # default 8001 8002 ...
+    listen_port     1111 2222;# 8003 8004;  # default 8001 8002 ...
     backlog         4096;                 # default 100
     #recv_buf       8192;                 # default 8192
     #send_buf       8192;                 # default 8192
@@ -85,14 +85,14 @@ worker{
     #max_sessions   4096;                 # if set, will override to the global worker_max_sessions
 }
 
-#worker{
-#   name        vedio-worker;
-#   listen_port 1081;
-#}
+worker{
+   name        vedio-worker;
+   listen_port 3333;
+}
 
-#worker{
-#   listen_port 1082;
-#}
+worker{
+   listen_port 4444;
+}
 
 #worker{
 #   listen_port 1083;
